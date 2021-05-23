@@ -101,11 +101,28 @@ dataset_version_dict = {
     'yelp':'reviews.csv'
 }
 
+label_key_dict = {
+    'amazon':'y',
+    'bdd100k':'',
+    'camelyon17':'tumor',
+    'celebA':'',
+    'civilcomments':'toxicity',
+    'fmow':'',
+    'iwildcam':'y',
+    'ogbmolpcba':'',
+    'poverty':'wealthpooled',
+    'py150':'input',
+    'sqf':'found.weapon',
+    'waterbirds':'y',
+    'yelp':'y'
+}
+
 
 def main():
     config = get_config()
     dataset_version = dataset_version_dict[config.dataset]
-    if not dataset_version:
+    label_key = label_key_dict[config.dataset]
+    if not dataset_version or not label_key:
         assert 0, print("Not implemented.")
 
     # self-train rounds
@@ -161,7 +178,7 @@ def main():
                 num_train_examples += 1
             else:
                 splits.append(row['split'])
-                pseudolabels.append(row['toxicity'])
+                pseudolabels.append(row[label_key])
                 if row['split'] == 0:
                     num_train_examples += 1
         assert len(metadata_df) == len(pseudolabels)
@@ -169,7 +186,7 @@ def main():
         
         print(f"TRAIN SET SIZE: {num_train_examples}\n\n")
         metadata_df['split'] = splits
-        metadata_df['toxicity'] = pseudolabels
+        metadata_df[label_key] = pseudolabels
         metadata_df['id'] = ids
         dataset_version = f"iter{round+1}.csv"
         metadata_df.to_csv(f"{config.root_dir}/{config.dataset}_v1.0/{dataset_version}", index=False, header=list(metadata_df.keys()))
