@@ -68,7 +68,7 @@ class SQFDataset(WILDSDataset):
             'download_url': 'https://worksheets.codalab.org/rest/bundles/0xea27fd7daef642d2aa95b02f1e3ac404/contents/blob/',
             'compressed_size': 36_708_352}}
 
-    def __init__(self, version=None, root_dir='data', download=False, split_scheme='all_race'):
+    def __init__(self, version=None, root_dir='data', download=False, split_scheme='all_race', dataset_version='sqf.csv'):
         # set variables
         self._version = version
         self._split_scheme = split_scheme
@@ -78,7 +78,9 @@ class SQFDataset(WILDSDataset):
         self._data_dir = self.initialize_data_dir(root_dir, download)
 
         # Load data
-        data_df = pd.read_csv(os.path.join(self.data_dir, 'sqf.csv') , index_col=0)
+        if not dataset_version:
+            dataset_version = 'sqf.csv'
+        data_df = pd.read_csv(os.path.join(self.data_dir, dataset_version) , index_col=0)
         data_df = data_df[data_df['suspected.crime'] == 'cpw']
         categories = ['black', 'white hispanic', 'black hispanic', 'hispanic', 'white']
         data_df = data_df.loc[data_df['suspect.race'].map(lambda x: x in categories)]

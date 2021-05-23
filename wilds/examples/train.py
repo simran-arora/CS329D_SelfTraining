@@ -1,9 +1,11 @@
 import os
 from tqdm import tqdm
 import torch
-from utils import save_model, save_pred, get_pred_prefix, get_model_prefix
+from utils import save_model, save_pred, get_pred_prefix, get_model_prefix, save_probs
 import torch.autograd.profiler as profiler
+import  torch.nn.functional as F
 from configs.supported import process_outputs_functions
+
 
 def run_epoch(algorithm, dataset, general_logger, epoch, config, train):
     if dataset['verbose']:
@@ -20,7 +22,7 @@ def run_epoch(algorithm, dataset, general_logger, epoch, config, train):
     epoch_y_true = []
     epoch_y_pred = []
     epoch_metadata = []
-
+    epoch_y_prob = []
     # Using enumerate(iterator) can sometimes leak memory in some environments (!)
     # so we manually increment batch_idx
     batch_idx = 0
@@ -41,6 +43,7 @@ def run_epoch(algorithm, dataset, general_logger, epoch, config, train):
         if config.process_outputs_function is not None:
             y_pred = process_outputs_functions[config.process_outputs_function](y_pred)
         epoch_y_pred.append(y_pred)
+        epoch_y_prob.append(batch_results['y_pred'].clone().detach())
         epoch_metadata.append(batch_results['metadata'].clone().detach())
 
         if train and (batch_idx+1) % config.log_every==0:
@@ -51,6 +54,7 @@ def run_epoch(algorithm, dataset, general_logger, epoch, config, train):
     epoch_y_pred = torch.cat(epoch_y_pred)
     epoch_y_true = torch.cat(epoch_y_true)
     epoch_metadata = torch.cat(epoch_metadata)
+    epoch_y_prob = torch.cat(epoch_y_prob)
     results, results_str = dataset['dataset'].eval(
         epoch_y_pred,
         epoch_y_true,
@@ -71,7 +75,7 @@ def run_epoch(algorithm, dataset, general_logger, epoch, config, train):
         general_logger.write('Epoch eval:\n')
         general_logger.write(results_str)
 
-    return results, epoch_y_pred
+    return results, epoch_y_pred, epoch_y_prob
 
 
 def train(algorithm, datasets, general_logger, config, epoch_offset, best_val_metric):
@@ -82,7 +86,7 @@ def train(algorithm, datasets, general_logger, config, epoch_offset, best_val_me
         run_epoch(algorithm, datasets['train'], general_logger, epoch, config, train=True)
 
         # Then run val
-        val_results, y_pred = run_epoch(algorithm, datasets['val'], general_logger, epoch, config, train=False)
+        val_results, y_pred, y_prob = run_epoch(algorithm, datasets['val'], general_logger, epoch, config, train=False)
         curr_val_metric = val_results[config.val_metric]
         general_logger.write(f'Validation {config.val_metric}: {curr_val_metric:.3f}\n')
 
@@ -98,7 +102,7 @@ def train(algorithm, datasets, general_logger, config, epoch_offset, best_val_me
             general_logger.write(f'Epoch {epoch} has the best validation performance so far.\n')
 
         save_model_if_needed(algorithm, datasets['val'], epoch, config, is_best, best_val_metric)
-        save_pred_if_needed(y_pred, datasets['val'], epoch, config, is_best)
+        save_pred_if_needed(y_pred, y_prob, datasets['val'], epoch, config, is_best)
 
         # Then run everything else
         if config.evaluate_all_splits:
@@ -106,8 +110,8 @@ def train(algorithm, datasets, general_logger, config, epoch_offset, best_val_me
         else:
             additional_splits = config.eval_splits
         for split in additional_splits:
-            _, y_pred = run_epoch(algorithm, datasets[split], general_logger, epoch, config, train=False)
-            save_pred_if_needed(y_pred, datasets[split], epoch, config, is_best)
+            _, y_pred, y_prob = run_epoch(algorithm, datasets[split], general_logger, epoch, config, train=False)
+            save_pred_if_needed(y_pred, y_prob, datasets[split], epoch, config, is_best)
 
         general_logger.write('\n')
 
@@ -120,6 +124,7 @@ def evaluate(algorithm, datasets, epoch, general_logger, config):
         epoch_y_true = []
         epoch_y_pred = []
         epoch_metadata = []
+        epoch_y_probs = []
         iterator = tqdm(dataset['loader']) if config.progress_bar else dataset['loader']
         for batch in iterator:
             batch_results = algorithm.evaluate(batch)
@@ -128,12 +133,15 @@ def evaluate(algorithm, datasets, epoch, general_logger, config):
             if config.process_outputs_function is not None:
                 y_pred = process_outputs_functions[config.process_outputs_function](y_pred)
             epoch_y_pred.append(y_pred)
+            y_prob = batch_results['y_pred'].clone().detach()
+            epoch_y_probs.append(y_prob)
             epoch_metadata.append(batch_results['metadata'].clone().detach())
 
         results, results_str = dataset['dataset'].eval(
             torch.cat(epoch_y_pred),
             torch.cat(epoch_y_true),
-            torch.cat(epoch_metadata))
+            torch.cat(epoch_metadata),
+        )
 
         results['epoch'] = epoch
         dataset['eval_logger'].log(results)
@@ -142,7 +150,7 @@ def evaluate(algorithm, datasets, epoch, general_logger, config):
 
         # Skip saving train preds, since the train loader generally shuffles the data
         if split != 'train':
-            save_pred_if_needed(y_pred, dataset, epoch, config, is_best=False, force_save=True)
+            save_pred_if_needed(y_pred, y_prob, dataset, epoch, config, is_best=False, force_save=True)
 
 
 def log_results(algorithm, dataset, general_logger, epoch, batch_idx):
@@ -156,15 +164,22 @@ def log_results(algorithm, dataset, general_logger, epoch, batch_idx):
         algorithm.reset_log()
 
 
-def save_pred_if_needed(y_pred, dataset, epoch, config, is_best, force_save=False):
+def save_pred_if_needed(y_pred, y_prob, dataset, epoch, config, is_best, force_save=False):
     if config.save_pred:
         prefix = get_pred_prefix(dataset, config)
+        y_prob = F.softmax(y_prob, dim=1)
         if force_save or (config.save_step is not None and (epoch + 1) % config.save_step == 0):
             save_pred(y_pred, prefix + f'epoch:{epoch}_pred.csv')
+            if not config.eval_only:
+                save_probs(y_prob, dataset, prefix + f'epoch:{epoch}_prob.csv')
         if config.save_last:
             save_pred(y_pred, prefix + f'epoch:last_pred.csv')
+            if not config.eval_only:
+                save_probs(y_prob, dataset, prefix + f'epoch:last_prob.csv')
         if config.save_best and is_best:
             save_pred(y_pred, prefix + f'epoch:best_pred.csv')
+            if not config.eval_only:
+                save_probs(y_prob, dataset, prefix + f'epoch:best_prob.csv')
 
 
 def save_model_if_needed(algorithm, dataset, epoch, config, is_best, best_val_metric):

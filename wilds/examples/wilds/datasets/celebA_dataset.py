@@ -57,15 +57,17 @@ class CelebADataset(WILDSDataset):
             'download_url': 'https://worksheets.codalab.org/rest/bundles/0xfe55077f5cd541f985ebf9ec50473293/contents/blob/',
             'compressed_size': 1_308_557_312}}
 
-    def __init__(self, version=None, root_dir='data', download=False, split_scheme='official'):
+    def __init__(self, version=None, root_dir='data', download=False, split_scheme='official', dataset_version='list_attr_celeba.csv'):
         self._version = version
         self._data_dir = self.initialize_data_dir(root_dir, download)
         target_name = 'Blond_Hair'
         confounder_names = ['Male']
 
         # Read in attributes
+        if not dataset_version:
+            dataset_version = 'list_attr_celeba.csv'
         attrs_df = pd.read_csv(
-            os.path.join(self.data_dir, 'list_attr_celeba.csv'))
+            os.path.join(self.data_dir, dataset_version))
 
         # Split out filenames and attribute names
         # Note: idx and filenames are off by one.

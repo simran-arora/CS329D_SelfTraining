@@ -51,14 +51,16 @@ class Camelyon17Dataset(WILDSDataset):
             'download_url': 'https://worksheets.codalab.org/rest/bundles/0xe45e15f39fb54e9d9e919556af67aabe/contents/blob/',
             'compressed_size': 10_658_709_504}}
 
-    def __init__(self, version=None, root_dir='data', download=False, split_scheme='official'):
+    def __init__(self, version=None, root_dir='data', download=False, split_scheme='official', dataset_version='metadata.csv'):
         self._version = version
         self._data_dir = self.initialize_data_dir(root_dir, download)
         self._original_resolution = (96,96)
 
         # Read in metadata
+        if not dataset_version:
+            dataset_version = 'metadata.csv'
         self._metadata_df = pd.read_csv(
-            os.path.join(self._data_dir, 'metadata.csv'),
+            os.path.join(self._data_dir, dataset_version),
             index_col=0,
             dtype={'patient': 'str'})
 

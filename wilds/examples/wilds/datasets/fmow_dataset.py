@@ -63,7 +63,7 @@ class FMoWDataset(WILDSDataset):
             'compressed_size': 53_893_324_800}
     }
 
-    def __init__(self, version=None, root_dir='data', download=False, split_scheme='official', oracle_training_set=False, seed=111, use_ood_val=False):
+    def __init__(self, version=None, root_dir='data', download=False, split_scheme='official', oracle_training_set=False, seed=111, use_ood_val=False, dataset_version='rgb_metadata.csv'):
         self._version = version
         self._data_dir = self.initialize_data_dir(root_dir, download)
 
@@ -80,7 +80,9 @@ class FMoWDataset(WILDSDataset):
 
         self.category_to_idx = {cat: i for i, cat in enumerate(categories)}
 
-        self.metadata = pd.read_csv(self.root / 'rgb_metadata.csv')
+        if not dataset_version:
+            dataset_version = 'rgb_metadata.csv'
+        self.metadata = pd.read_csv(self.root / dataset_version)
         country_codes_df = pd.read_csv(self.root / 'country_code_mapping.csv')
         countrycode_to_region = {k: v for k, v in zip(country_codes_df['alpha-3'], country_codes_df['region'])}
         regions = [countrycode_to_region.get(code, 'Other') for code in self.metadata['country_code'].to_list()]

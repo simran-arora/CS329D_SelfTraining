@@ -165,10 +165,12 @@ def set_seed(seed):
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
 
+
 def log_config(config, logger):
     for name, val in vars(config).items():
         logger.write(f'{name.replace("_"," ").capitalize()}: {val}\n')
     logger.write('\n')
+
 
 def initialize_wandb(config):
     name = config.dataset + '_' + config.algorithm + '_' + config.log_dir
@@ -176,9 +178,21 @@ def initialize_wandb(config):
                project=f"wilds")
     wandb.config.update(config)
 
+
 def save_pred(y_pred, csv_path):
     df = pd.DataFrame(y_pred.numpy())
     df.to_csv(csv_path, index=False, header=False)
+
+
+def save_probs(y_prob, dataset, csv_path):
+    split_indices = dataset['dataset'].indices
+    y_prob = y_prob.numpy()
+    dataset2probs = {}
+    for ind, prob in zip(split_indices, y_prob):
+        dataset2probs[ind] = list(prob)
+    df = pd.DataFrame(dataset2probs.items())
+    df.to_csv(csv_path, index=False, header=False)
+
 
 def get_replicate_str(dataset, config):
     if dataset['dataset'].dataset_name == 'poverty':
@@ -186,6 +200,7 @@ def get_replicate_str(dataset, config):
     else:
         replicate_str = f"seed:{config.seed}"
     return replicate_str
+
 
 def get_pred_prefix(dataset, config):
     dataset_name = dataset['dataset'].dataset_name
@@ -195,6 +210,7 @@ def get_pred_prefix(dataset, config):
         config.log_dir,
         f"{dataset_name}_split:{split}_{replicate_str}_")
     return prefix
+
 
 def get_model_prefix(dataset, config):
     dataset_name = dataset['dataset'].dataset_name

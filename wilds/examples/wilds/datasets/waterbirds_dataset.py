@@ -59,7 +59,7 @@ class WaterbirdsDataset(WILDSDataset):
             'download_url': 'https://worksheets.codalab.org/rest/bundles/0x505056d5cdea4e4eaa0e242cbfe2daa4/contents/blob/',
             'compressed_size': None}}
 
-    def __init__(self, version=None, root_dir='data', download=False, split_scheme='official'):
+    def __init__(self, version=None, root_dir='data', download=False, split_scheme='official', dataset_version='metadata.csv'):
         self._version = version
         self._data_dir = self.initialize_data_dir(root_dir, download)
 
@@ -69,8 +69,10 @@ class WaterbirdsDataset(WILDSDataset):
 
         # Read in metadata
         # Note: metadata_df is one-indexed.
+        if not dataset_version:
+            dataset_version = 'metadata.csv'
         metadata_df = pd.read_csv(
-            os.path.join(self.data_dir, 'metadata.csv'))
+            os.path.join(self.data_dir, dataset_version))
 
         # Get the y values
         self._y_array = torch.LongTensor(metadata_df['y'].values)

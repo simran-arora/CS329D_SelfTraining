@@ -61,13 +61,15 @@ class CivilCommentsDataset(WILDSDataset):
             'download_url': 'https://worksheets.codalab.org/rest/bundles/0x8cd3de0634154aeaad2ee6eb96723c6e/contents/blob/',
             'compressed_size': 90_644_480}}
 
-    def __init__(self, version=None, root_dir='data', download=False, split_scheme='official'):
+    def __init__(self, version=None, root_dir='data', download=False, split_scheme='official', dataset_version='all_data_with_identities.csv'):
         self._version = version
         self._data_dir = self.initialize_data_dir(root_dir, download)
 
         # Read in metadata
+        if not dataset_version:
+            dataset_version = 'all_data_with_identities.csv'
         self._metadata_df = pd.read_csv(
-            os.path.join(self._data_dir, 'all_data_with_identities.csv'),
+            os.path.join(self._data_dir, dataset_version),
             index_col=0)
 
         # Get the y values
@@ -83,6 +85,7 @@ class CivilCommentsDataset(WILDSDataset):
         if self._split_scheme != 'official':
             raise ValueError(f'Split scheme {self._split_scheme} not recognized')
         # metadata_df contains split names in strings, so convert them to ints
+        
         for split in self.split_dict:
             split_indices = self._metadata_df['split'] == split
             self._metadata_df.loc[split_indices, 'split'] = self.split_dict[split]
@@ -125,7 +128,7 @@ class CivilCommentsDataset(WILDSDataset):
                 groupby_fields=[identity_var, 'y'])
             for identity_var in self._identity_vars]
 
-        super().__init__(root_dir, download, split_scheme)
+        super().__init__(root_dir, download, split_scheme, dataset_version)
 
     def get_input(self, idx):
         return self._text_array[idx]

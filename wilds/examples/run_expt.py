@@ -19,6 +19,8 @@ from transforms import initialize_transform
 from configs.utils import populate_defaults
 import configs.supported as supported
 
+import subprocess
+
 def main():
     ''' set default hyperparams in default_hyperparams.py '''
     parser = argparse.ArgumentParser()
@@ -32,6 +34,7 @@ def main():
     # Dataset
     parser.add_argument('--split_scheme', help='Identifies how the train/val/test split is constructed. Choices are dataset-specific.')
     parser.add_argument('--dataset_kwargs', nargs='*', action=ParseKwargs, default={})
+    parser.add_argument('--dataset_version', type=str)
     parser.add_argument('--download', default=False, type=parse_bool, const=True, nargs='?',
                         help='If true, tries to downloads the dataset if it does not exist in root_dir.')
     parser.add_argument('--frac', type=float, default=1.0,
@@ -143,6 +146,7 @@ def main():
         root_dir=config.root_dir,
         download=config.download,
         split_scheme=config.split_scheme,
+        dataset_version=config.dataset_version,
         **config.dataset_kwargs)
 
     # To implement data augmentation (i.e., have different transforms
@@ -280,6 +284,7 @@ def main():
     for split in datasets:
         datasets[split]['eval_logger'].close()
         datasets[split]['algo_logger'].close()
+
 
 if __name__=='__main__':
     main()

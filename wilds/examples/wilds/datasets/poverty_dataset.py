@@ -151,7 +151,7 @@ class PovertyMapDataset(WILDSDataset):
                  split_scheme='official',
                  no_nl=False, fold='A', oracle_training_set=False,
                  use_ood_val=True,
-                 cache_size=100):
+                 cache_size=100, dataset_version='dhs_metadata.csv'):
         self._version = version
         self._data_dir = self.initialize_data_dir(root_dir, download)
 
@@ -171,7 +171,9 @@ class PovertyMapDataset(WILDSDataset):
             raise ValueError("Fold must be A, B, C, D, or E")
 
         self.root = Path(self._data_dir)
-        self.metadata = pd.read_csv(self.root / 'dhs_metadata.csv')
+        if not dataset_version:
+            dataset_version = 'dhs_metadata.csv'
+        self.metadata = pd.read_csv(self.root / dataset_version)
         # country folds, split off OOD
         country_folds = SURVEY_NAMES[f'2009-17{fold}']
 

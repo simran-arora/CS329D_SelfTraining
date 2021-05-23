@@ -42,7 +42,7 @@ class IWildCamDataset(WILDSDataset):
             'download_url': 'https://worksheets.codalab.org/rest/bundles/0x6313da2b204647e79a14b468131fcd64/contents/blob/',
             'compressed_size': 12_000_000_000}}
 
-    def __init__(self, version=None, root_dir='data', download=False, split_scheme='official'):
+    def __init__(self, version=None, root_dir='data', download=False, split_scheme='official', dataset_version='metadata.csv'):
 
         self._version = version
         self._split_scheme = split_scheme
@@ -53,7 +53,9 @@ class IWildCamDataset(WILDSDataset):
         self._data_dir = Path(self.initialize_data_dir(root_dir, download))
 
         # Load splits
-        df = pd.read_csv(self._data_dir / 'metadata.csv')
+        if not dataset_version:
+            dataset_version = 'metadata.csv'
+        df = pd.read_csv(self._data_dir / dataset_version)
 
         # Splits
         self._split_dict = {'train': 0, 'val': 1, 'test': 2, 'id_val': 3, 'id_test': 4}

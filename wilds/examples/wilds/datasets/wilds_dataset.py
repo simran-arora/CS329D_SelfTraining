@@ -16,7 +16,7 @@ class WILDSDataset:
     DEFAULT_SPLITS = {'train': 0, 'val': 1, 'test': 2}
     DEFAULT_SPLIT_NAMES = {'train': 'Train', 'val': 'Validation', 'test': 'Test'}
 
-    def __init__(self, root_dir, download, split_scheme):
+    def __init__(self, root_dir, download, split_scheme, dataset_version=''):
         if len(self._metadata_array.shape) == 1:
             self._metadata_array = self._metadata_array.unsqueeze(1)
         self.check_init()
