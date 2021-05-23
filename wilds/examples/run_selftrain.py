@@ -121,7 +121,7 @@ def main():
 
         # load the predictions (softmax scores)
         keys = ['idx', 'scores']
-        probs_df = pd.read_csv(os.path.join(f"{config.log_dir}/civilcomments_split:test_seed:0_epoch:best_prob.csv"),
+        probs_df = pd.read_csv(os.path.join(f"{config.log_dir}/{config.dataset}_split:test_seed:0_epoch:best_prob.csv"),
                                index_col=False, names=keys)
 
         # collect predictions on the resulting test data, if above the threshold
@@ -175,6 +175,5 @@ def main():
         metadata_df.to_csv(f"{config.root_dir}/{config.dataset}_v1.0/{dataset_version}", index=False, header=list(metadata_df.keys()))
 
 # Example Command:
-# python examples/run_selftrain.py --dataset civilcomments --dataset_version iter0.csv --log_dir selftrain_test --root_dir data --split_scheme official --frac 0.002 --n_epochs 1 --algorithm ERM
 if __name__=='__main__':
     main()
