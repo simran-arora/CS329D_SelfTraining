@@ -169,21 +169,25 @@ def subsample(metadata_df, config, TRAIN_SIZE, UNLABELED_TEST_SIZE, LABELED_TEST
         if split == 'train':
             indices = split_indices[split_indices == True]
             indices = list(indices.keys())
-            indices = random.sample(indices, TRAIN_SIZE)
+            if TRAIN_SIZE > 0:
+                indices = random.sample(indices, TRAIN_SIZE)
             subsampled_splits.append(indices)
             labeled_splits.append(indices)
         elif split == 'test':
             indices = split_indices[split_indices == True]
             indices = list(indices.keys())
-            unlabeled_indices = random.sample(indices, UNLABELED_TEST_SIZE)
+            if UNLABELED_TEST_SIZE > 0:
+                unlabeled_indices = random.sample(indices, UNLABELED_TEST_SIZE)
             labeled_indices = [idx for idx in indices if idx not in unlabeled_indices]
-            labeled_indices = random.sample(labeled_indices, LABELED_TEST_SIZE)
+            if LABELED_TEST_SIZE > 0:
+                labeled_indices = random.sample(labeled_indices, LABELED_TEST_SIZE)
             subsampled_splits.append(unlabeled_indices)
             labeled_splits.append(labeled_indices)
         else:
             indices = split_indices[split_indices == True]
             indices = list(indices.keys())
-            indices = random.sample(indices, VAL_SIZE)
+            if VAL_SIZE > 0:
+                indices = random.sample(indices, VAL_SIZE)
             subsampled_splits.append(indices)
             labeled_splits.append(indices)
 
@@ -211,10 +215,10 @@ def main():
         assert 0, print("Not implemented.")
 
     # SUBSAMPLE THE DATASET
-    TRAIN_SIZE = 500
-    VAL_SIZE = 500
-    UNLABELED_TEST_SIZE = 500
-    LABELED_TEST_SIZE = 500
+    TRAIN_SIZE = 50000
+    VAL_SIZE = -1
+    UNLABELED_TEST_SIZE = 50000
+    LABELED_TEST_SIZE = -1
     full_dataset = wilds.get_dataset(
         dataset=config.dataset,
         version=config.version,
