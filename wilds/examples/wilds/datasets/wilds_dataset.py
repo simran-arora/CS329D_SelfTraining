@@ -68,10 +68,12 @@ class WILDSDataset:
             raise ValueError(f"Split {split} not found in dataset's split_dict.")
         split_mask = self.split_array == self.split_dict[split]
         split_idx = np.where(split_mask)[0]
+        split_df = self._metadata_df[self._metadata_df['split'] == self.split_dict[split]]
+        orig_idx = split_df.index
         if frac < 1.0:
             num_to_retain = int(np.round(float(len(split_idx)) * frac))
             split_idx = np.sort(np.random.permutation(split_idx)[:num_to_retain])
-        subset = WILDSSubset(self, split_idx, transform)
+        subset = WILDSSubset(self, split_idx, orig_idx, transform)
         return subset
 
     def check_init(self):
@@ -423,7 +425,7 @@ class WILDSDataset:
 
 
 class WILDSSubset(WILDSDataset):
-    def __init__(self, dataset, indices, transform):
+    def __init__(self, dataset, indices, orig_idx, transform):
         """
         This acts like torch.utils.data.Subset, but on WILDSDatasets.
         We pass in transform explicitly because it can potentially vary at
@@ -431,6 +433,7 @@ class WILDSSubset(WILDSDataset):
         """
         self.dataset = dataset
         self.indices = indices
+        self.orig_index = orig_idx
         inherited_attrs = ['_dataset_name', '_data_dir', '_collate',
                            '_split_scheme', '_split_dict', '_split_names',
                            '_y_size', '_n_classes',

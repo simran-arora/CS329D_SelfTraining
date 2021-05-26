@@ -185,10 +185,13 @@ def save_pred(y_pred, csv_path):
 
 
 def save_probs(y_prob, dataset, csv_path):
+    # import pdb;
+    # pdb.set_trace()
     split_indices = dataset['dataset'].indices
+    orig_split_indices = dataset['dataset'].orig_index
     y_prob = y_prob.numpy()
     dataset2probs = {}
-    for ind, prob in zip(split_indices, y_prob):
+    for ind, prob in zip(orig_split_indices, y_prob):
         dataset2probs[ind] = list(prob)
     df = pd.DataFrame(dataset2probs.items())
     df.to_csv(csv_path, index=False, header=False)
