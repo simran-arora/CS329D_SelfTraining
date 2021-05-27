@@ -66,6 +66,7 @@ class WILDSDataset:
         """
         if split not in self.split_dict:
             raise ValueError(f"Split {split} not found in dataset's split_dict.")
+
         split_mask = self.split_array == self.split_dict[split]
         split_idx = np.where(split_mask)[0]
         split_df = self._metadata_df[self._metadata_df['split'] == self.split_dict[split]]

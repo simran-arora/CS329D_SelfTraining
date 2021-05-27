@@ -8,6 +8,7 @@ import torchvision
 import sys
 import ast
 import random
+import json
 from collections import defaultdict
 import torch.nn.functional as F
 from tqdm import tqdm
@@ -16,78 +17,14 @@ import wilds
 import configs.supported as supported
 from utils import parse_bool, ParseKwargs
 from configs.utils import populate_defaults
+import scipy
+from scipy.stats import entropy
 
 import subprocess
 import shlex
 
+
 split_dict = {'train': 0, 'val': 1, 'test': 2}
-
-
-def train(config, dataset_version='all_data_with_identities.csv'):
-    dataset = config.dataset
-    algorithm = config.algorithm
-    root_dir = config.root_dir
-    frac = config.frac
-    n_epochs = config.n_epochs
-    log_dir = config.log_dir
-    cmd = f'python examples/run_expt.py --dataset={dataset} --log_dir {log_dir} --algorithm={algorithm} ' + \
-          f'--root_dir={root_dir} --frac={frac} --n_epochs={n_epochs} --dataset_version {dataset_version}'
-    subprocess.run(shlex.split(cmd))
-
-
-def evaluate(config, dataset_version):
-    dataset = config.dataset
-    algorithm = config.algorithm
-    root_dir = config.root_dir
-    frac = config.frac
-    n_epochs = config.n_epochs
-    log_dir = config.log_dir
-    cmd = f'python examples/run_expt.py --dataset={dataset} --log_dir {log_dir} --algorithm={algorithm} ' + \
-          f'--root_dir={root_dir} --frac={frac} --n_epochs={n_epochs} --dataset_version {dataset_version} --eval_only'
-    subprocess.run(shlex.split(cmd))
-
-
-def get_config():
-    ''' set default hyperparams in default_hyperparams.py '''
-    parser = argparse.ArgumentParser()
-
-    # Required arguments
-    parser.add_argument('-d', '--dataset', choices=wilds.supported_datasets, required=True)
-    parser.add_argument('--algorithm', required=True, choices=supported.algorithms)
-    parser.add_argument('--root_dir', required=True,
-                        help='The directory where [dataset]/data can be found (or should be downloaded to, if it does not exist).')
-
-    parser.add_argument('--split_scheme',
-                        help='Identifies how the train/val/test split is constructed. Choices are dataset-specific.')
-    parser.add_argument('--dataset_kwargs', nargs='*', action=ParseKwargs, default={})
-    parser.add_argument('--dataset_version', type=str)
-    parser.add_argument('--download', default=False, type=parse_bool, const=True, nargs='?',
-                        help='If true, tries to downloads the dataset if it does not exist in root_dir.')
-    parser.add_argument('--version', default=None, type=str)
-    parser.add_argument('--frac', type=float, default=1.0,
-                        help='Convenience parameter that scales all dataset splits down to the specified fraction, for development purposes. Note that this also scales the test set down, so the reported numbers are not comparable with the full test set.')
-    parser.add_argument('--subsample_seed', type=int, default=1,
-                        help='Subsampling the dataset randomly')
-
-    # Algorithm
-    parser.add_argument('--self_train_threshold', type=float, default=0.8)
-    parser.add_argument('--self_train_rounds', type=int, default=3)
-
-    # Optimization
-    parser.add_argument('--n_epochs', type=int)
-
-    # Evaluation
-    parser.add_argument('--eval_only', type=parse_bool, const=True, nargs='?', default=False)
-
-    # Misc
-    parser.add_argument('--log_dir', default='./logs')
-    parser.add_argument('--save_step', type=int)
-    parser.add_argument('--save_best', type=parse_bool, const=True, nargs='?', default=True)
-    parser.add_argument('--save_last', type=parse_bool, const=True, nargs='?', default=True)
-    parser.add_argument('--save_pred', type=parse_bool, const=True, nargs='?', default=True)
-
-    config = parser.parse_args()
-    return config
 
 
 full_dataset_version_dict = {
@@ -158,56 +95,154 @@ label_key_dict = {
 }
 
 
-def subsample(metadata_df, config, TRAIN_SIZE, UNLABELED_TEST_SIZE, LABELED_TEST_SIZE, VAL_SIZE):
+# in the following, -1 indicates using the full split
+split_sizes = {
+    # amazon sizes in full: 245502, 100050, 46950
+    'amazon': {'TRAIN': 50000, 'LABELED_TEST': -1, 'UNLABELED_TEST': 20000, 'VAL': 50000},
+    
+    # civil comments sizes in full: ~200k, ~45k, ~130k
+    'civilcomments': {'TRAIN': 50000, 'LABELED_TEST': -1, 'UNLABELED_TEST': 50000, 'VAL': -1},
+}
+
+
+datasetname_suffix = {
+    'amazon':'v2.0',
+    'civilcomments':'v1.0',
+}
+
+
+def get_config():
+    ''' set default hyperparams in default_hyperparams.py '''
+    parser = argparse.ArgumentParser()
+
+    # Required arguments
+    parser.add_argument('-d', '--dataset', choices=wilds.supported_datasets, required=True)
+    parser.add_argument('--algorithm', required=True, choices=supported.algorithms)
+    parser.add_argument('--root_dir', required=True,
+                        help="The directory where [dataset]/data can be found (or should be downloaded to, if it does not exist).")
+    parser.add_argument('--data_dir', required=True,
+                        help="The sub directory where to write out the subsample data for this experiment.")
+
+    parser.add_argument('--split_scheme',
+                        help='Identifies how the train/val/test split is constructed. Choices are dataset-specific.')
+    parser.add_argument('--dataset_kwargs', nargs='*', action=ParseKwargs, default={})
+    parser.add_argument('--dataset_version', type=str)
+    parser.add_argument('--download', default=False, type=parse_bool, const=True, nargs='?',
+                        help='If true, tries to downloads the dataset if it does not exist in root_dir.')
+    parser.add_argument('--version', default=None, type=str)
+    parser.add_argument('--frac', type=float, default=1.0,
+                        help='Convenience parameter that scales all dataset splits down to the specified fraction, for development purposes. Note that this also scales the test set down, so the reported numbers are not comparable with the full test set.')
+    parser.add_argument('--subsample_seed', type=int, default=1,
+                        help='Subsampling the dataset randomly')
+
+    # Algorithm
+    parser.add_argument('--self_train_threshold', type=float, default=0.8)
+    parser.add_argument('--self_train_rounds', type=int, default=3)
+
+    # Optimization
+    parser.add_argument('--n_epochs', type=int)
+
+    # Evaluation
+    parser.add_argument('--eval_only', type=parse_bool, const=True, nargs='?', default=False)
+
+    # Misc
+    parser.add_argument('--log_dir', default='./logs')
+    parser.add_argument('--save_step', type=int)
+    parser.add_argument('--save_best', type=parse_bool, const=True, nargs='?', default=True)
+    parser.add_argument('--save_last', type=parse_bool, const=True, nargs='?', default=True)
+    parser.add_argument('--save_pred', type=parse_bool, const=True, nargs='?', default=True)
+
+    config = parser.parse_args()
+    return config
+
+
+def train(config, dataset_version='all_data_with_identities.csv', log_dir=''):
+    dataset = config.dataset
+    algorithm = config.algorithm
+    root_dir = config.root_dir
+    cmd = f'python examples/run_expt.py --dataset={dataset} --log_dir {log_dir} --algorithm={algorithm} ' + \
+          f'--root_dir={root_dir} --dataset_version {dataset_version}'
+    subprocess.run(shlex.split(cmd))
+
+
+def evaluate(config, dataset_version, log_dir=''):
+    dataset = config.dataset
+    algorithm = config.algorithm
+    root_dir = config.root_dir
+    cmd = f'python examples/run_expt.py --dataset={dataset} --log_dir {log_dir} --algorithm={algorithm} ' + \
+          f'--root_dir={root_dir} --dataset_version {dataset_version} --eval_only'
+    subprocess.run(shlex.split(cmd))
+
+
+def compute_entropy(probs):
+    confidence = entropy(list(probs), base=2)
+    return confidence
+
+
+def subsample(metadata_df, config, subsample_sizes, dataset_suffix):
+    TRAIN_SIZE = subsample_sizes['TRAIN']
+    UNLABELED_TEST_SIZE = subsample_sizes['UNLABELED_TEST']
+    VAL_SIZE = subsample_sizes['VAL']
+    LABELED_TEST_SIZE = subsample_sizes['LABELED_TEST']
     subsampled_splits = []
     labeled_splits = []
 
     random.seed(config.subsample_seed)
     for split in split_dict:
         split_indices = metadata_df['split'] == split_dict[split]
-
         if split == 'train':
             indices = split_indices[split_indices == True]
             indices = list(indices.keys())
-            if TRAIN_SIZE > 0:
+            if TRAIN_SIZE > 0 and len(indices) > TRAIN_SIZE:
                 indices = random.sample(indices, TRAIN_SIZE)
             subsampled_splits.append(indices)
             labeled_splits.append(indices)
         elif split == 'test':
             indices = split_indices[split_indices == True]
             indices = list(indices.keys())
-            if UNLABELED_TEST_SIZE > 0:
+            unlabeled_indices = []
+            if UNLABELED_TEST_SIZE > 0 and len(indices) > UNLABELED_TEST_SIZE:
                 unlabeled_indices = random.sample(indices, UNLABELED_TEST_SIZE)
+
             labeled_indices = [idx for idx in indices if idx not in unlabeled_indices]
-            if LABELED_TEST_SIZE > 0:
+            if LABELED_TEST_SIZE > 0 and len(indices) > LABELED_TEST_SIZE:
                 labeled_indices = random.sample(labeled_indices, LABELED_TEST_SIZE)
             subsampled_splits.append(unlabeled_indices)
             labeled_splits.append(labeled_indices)
         else:
             indices = split_indices[split_indices == True]
             indices = list(indices.keys())
-            if VAL_SIZE > 0:
+            if VAL_SIZE > 0 and len(indices) > VAL_SIZE:
                 indices = random.sample(indices, VAL_SIZE)
             subsampled_splits.append(indices)
             labeled_splits.append(indices)
 
-    # here the test data will be the unlabeled split for which we want to collect
-    # soft-max scores and pseudolabel
+    # here the test data will be the unlabeled split for which we want to collect soft-max scores and pseudolabel
     all_indices = subsampled_splits[0] + subsampled_splits[1] + subsampled_splits[2]
     subsampled_df = metadata_df.loc[all_indices]
-    subsampled_df.to_csv(f"{config.root_dir}/{config.dataset}_v1.0/subsample_{config.dataset}.csv",
+    if not os.path.exists(f"{config.root_dir}/{config.dataset}_{dataset_suffix}/{config.data_dir}"):
+        os.mkdir(f"{config.root_dir}/{config.dataset}_{dataset_suffix}/{config.data_dir}")
+    subsampled_df.to_csv(f"{config.root_dir}/{config.dataset}_{dataset_suffix}/{config.data_dir}/subsample_{config.dataset}.csv",
                          index=False, header=list(subsampled_df.keys()))
 
-    # here the test data will be the held out test set we want to evaluate the self
-    # trained model on
+    # here the test data will be the held out test set we want to evaluate the self trained model on
     all_labeled_indices = labeled_splits[0] + labeled_splits[1] + labeled_splits[2]
     labeled_df = metadata_df.loc[all_labeled_indices]
-    labeled_df.to_csv(f"{config.root_dir}/{config.dataset}_v1.0/labeled_{config.dataset}.csv",
+    labeled_df.to_csv(f"{config.root_dir}/{config.dataset}_{dataset_suffix}/{config.data_dir}/labeled_{config.dataset}.csv",
                       index=False, header=list(labeled_df.keys()))
 
 
 def main():
     config = get_config()
+
+    # make the location to save the run dataset (subsampled) and config
+    dataset_suffix = datasetname_suffix[config.dataset]
+    if not os.path.exists(f'{config.root_dir}/{config.dataset}_{dataset_suffix}/{config.data_dir}/'):
+        os.mkdir(f'{config.root_dir}/{config.dataset}_{dataset_suffix}/{config.data_dir}/')
+    with open(f'{config.root_dir}/{config.dataset}_{dataset_suffix}/{config.data_dir}/config.json', 'w') as f:
+        json.dump(vars(config), f)
+
+    # obtain dataset names to use
     dataset_version = subsampled_dataset_version_dict[config.dataset]
     labeled_dataset = labeled_dataset_version_dict[config.dataset]
     label_key = label_key_dict[config.dataset]
@@ -215,10 +250,6 @@ def main():
         assert 0, print("Not implemented.")
 
     # SUBSAMPLE THE DATASET
-    TRAIN_SIZE = 50000
-    VAL_SIZE = -1
-    UNLABELED_TEST_SIZE = 50000
-    LABELED_TEST_SIZE = -1
     full_dataset = wilds.get_dataset(
         dataset=config.dataset,
         version=config.version,
@@ -227,22 +258,24 @@ def main():
         split_scheme=config.split_scheme,
         **config.dataset_kwargs)
     metadata_df = full_dataset._metadata_df
-    subsample(metadata_df, config, TRAIN_SIZE, UNLABELED_TEST_SIZE, LABELED_TEST_SIZE, VAL_SIZE)
+    subsample_sizes = split_sizes[config.dataset]
+    subsample(metadata_df, config, subsample_sizes, dataset_suffix)
 
     # self-train rounds
     for round in range(config.self_train_rounds):
-        print(f"ROUND {round} OF SELF TRAINING WITH DATASET {dataset_version} \n\n")
+        print(f"ROUND {round} OF SELF TRAINING WITH DATASET {config.data_dir}/{dataset_version} \n\n")
         
         # train the model using current pseudolabeled splits
-        train(config, dataset_version=dataset_version)
+        log_dir = f"{config.log_dir}/round{round}/"
+        train(config, dataset_version=f"{config.data_dir}/{dataset_version}", log_dir=f"{log_dir}")
 
         # run eval on original splits with the model from the last round
         print(f"ROUND {round} EVALUATING MODEL\n\n")
-        evaluate(config, dataset_version=labeled_dataset)
+        evaluate(config, dataset_version=f"{config.data_dir}/{labeled_dataset}", log_dir=f"{log_dir}")
 
         # load the predictions (softmax scores)
         keys = ['idx', 'scores']
-        probs_df = pd.read_csv(os.path.join(f"{config.log_dir}/{config.dataset}_split:test_seed:0_epoch:best_prob.csv"),
+        probs_df = pd.read_csv(os.path.join(f"{log_dir}/{config.data_dir}/{config.dataset}_split:test_seed:0_epoch:best_prob.csv"),
                                index_col=False, names=keys)
 
         # collect predictions on the resulting test data, if above the threshold
@@ -264,12 +297,13 @@ def main():
             root_dir=config.root_dir,
             download=config.download,
             split_scheme=config.split_scheme,
-            dataset_version=dataset_version,
+            dataset_version=f"{config.data_dir}/{dataset_version}",
             **config.dataset_kwargs)
         metadata_df = full_dataset._metadata_df
 
         for ind, _ in confident_indices.items():
-            assert ind in metadata_df.index.values.tolist(), print(metadata_df.index.values.tolist(), ind)
+            assert ind in metadata_df.index.values.tolist(), \
+                print(metadata_df.index.values.tolist(), ind)
 
         pseudolabels = []
         splits = []
@@ -294,12 +328,9 @@ def main():
         metadata_df[label_key] = pseudolabels
         metadata_df['id'] = ids
         dataset_version = f"iter{round+1}.csv"
-        metadata_df.to_csv(f"{config.root_dir}/{config.dataset}_v1.0/{dataset_version}", index=False, header=list(metadata_df.keys()))
-
-        # if len(metadata_df[metadata_df['split'] == split_dict['test']]) == 0:
-        #     print("Pseudo labeled all examples! TODO, how to make it train without test examples.")
-        #     break
-
+        metadata_df.to_csv(f"{config.root_dir}/{config.dataset}_{dataset_suffix}/{config.data_dir}/{dataset_version}",
+                           index=False, header=list(metadata_df.keys()))
+        
 
 if __name__=='__main__':
     main()

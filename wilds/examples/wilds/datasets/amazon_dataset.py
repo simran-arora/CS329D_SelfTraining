@@ -74,19 +74,30 @@ class AmazonDataset(WILDSDataset):
         # path
         self._data_dir = self.initialize_data_dir(root_dir, download)
         # Load data
-        if not dataset_version:
+        if not dataset_version or dataset_version == 'reviews.csv':
             dataset_version = 'reviews.csv'
-        data_df = pd.read_csv(os.path.join(self.data_dir, dataset_version),
+            split_df = pd.read_csv(os.path.join(self.data_dir, 'splits', f'{self.split_scheme}.csv'))
+            is_in_dataset = split_df['split'] != NOT_IN_DATASET
+            split_df = split_df[is_in_dataset]
+            data_df = pd.read_csv(os.path.join(self.data_dir, dataset_version),
                               dtype={'reviewerID':str, 'asin':str, 'reviewTime':str,'unixReviewTime':int,
                                      'reviewText':str,'summary':str,'verified':bool,'category':str, 'reviewYear':int},
                               keep_default_na=False, na_values=[], quoting=csv.QUOTE_NONNUMERIC)
-        split_df = pd.read_csv(os.path.join(self.data_dir, 'splits', f'{self.split_scheme}.csv'))
-        is_in_dataset = split_df['split']!=NOT_IN_DATASET
-        split_df = split_df[is_in_dataset]
-        data_df = data_df[is_in_dataset]
+            data_df = data_df[is_in_dataset]
+            self._split_array = split_df['split'].values
+            data_df['split'] = list(self._split_array)
+        else:
+            data_df = pd.read_csv(os.path.join(self.data_dir, dataset_version),
+                              dtype={'reviewerID': str, 'asin': str, 'reviewTime': str, 'unixReviewTime': int,
+                                     'reviewText': str, 'summary': str, 'verified': bool, 'category': str,
+                                     'reviewYear': int, 'split': int},
+                              keep_default_na=False, na_values=[], quoting=csv.QUOTE_NONNUMERIC)
+            self._split_array = data_df['split'].values
+
         # Get arrays
-        self._split_array = split_df['split'].values
         self._input_array = list(data_df['reviewText'])
+
+        self._metadata_df = data_df
         # Get metadata
         self._metadata_fields, self._metadata_array, self._metadata_map = self.load_metadata(data_df, self.split_array)
         # Get y from metadata
