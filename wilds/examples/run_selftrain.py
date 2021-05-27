@@ -24,7 +24,10 @@ import subprocess
 import shlex
 
 
-split_dict = {'train': 0, 'val': 1, 'test': 2}
+split_dicts = {
+    'civilcomments': {'train': 0, 'val': 1, 'test': 2},
+    'amazon': {'train': 0, 'val': 1, 'id_val': 2, 'test': 3, 'id_test': 4}
+}
 
 
 full_dataset_version_dict = {
@@ -97,8 +100,8 @@ label_key_dict = {
 
 # in the following, -1 indicates using the full split
 split_sizes = {
-    # amazon sizes in full: 245502, 100050, 46950
-    'amazon': {'TRAIN': 50000, 'LABELED_TEST': -1, 'UNLABELED_TEST': 20000, 'VAL': 50000},
+    # amazon sizes in full: 245502 (train), 100050 (val), 46950 (id val), 100050 (test), 46950 (id test)
+    'amazon': {'TRAIN': 50000, 'LABELED_TEST': -1, 'UNLABELED_TEST': 50000, 'VAL': 25000},
     
     # civil comments sizes in full: ~200k, ~45k, ~130k
     'civilcomments': {'TRAIN': 50000, 'LABELED_TEST': -1, 'UNLABELED_TEST': 50000, 'VAL': -1},
@@ -141,6 +144,7 @@ def get_config():
 
     # Optimization
     parser.add_argument('--n_epochs', type=int)
+    parser.add_argument('--batch_size', type=int)
 
     # Evaluation
     parser.add_argument('--eval_only', type=parse_bool, const=True, nargs='?', default=False)
@@ -160,8 +164,9 @@ def train(config, dataset_version='all_data_with_identities.csv', log_dir=''):
     dataset = config.dataset
     algorithm = config.algorithm
     root_dir = config.root_dir
+    batch_size = config.batch_size
     cmd = f'python examples/run_expt.py --dataset={dataset} --log_dir {log_dir} --algorithm={algorithm} ' + \
-          f'--root_dir={root_dir} --dataset_version {dataset_version}'
+          f'--root_dir={root_dir} --dataset_version {dataset_version} --batch_size {batch_size}'
     subprocess.run(shlex.split(cmd))
 
 
@@ -169,8 +174,9 @@ def evaluate(config, dataset_version, log_dir=''):
     dataset = config.dataset
     algorithm = config.algorithm
     root_dir = config.root_dir
+    batch_size = config.batch_size
     cmd = f'python examples/run_expt.py --dataset={dataset} --log_dir {log_dir} --algorithm={algorithm} ' + \
-          f'--root_dir={root_dir} --dataset_version {dataset_version} --eval_only'
+          f'--root_dir={root_dir} --dataset_version {dataset_version} --eval_only --batch_size {batch_size}'
     subprocess.run(shlex.split(cmd))
 
 
@@ -184,10 +190,14 @@ def subsample(metadata_df, config, subsample_sizes, dataset_suffix):
     UNLABELED_TEST_SIZE = subsample_sizes['UNLABELED_TEST']
     VAL_SIZE = subsample_sizes['VAL']
     LABELED_TEST_SIZE = subsample_sizes['LABELED_TEST']
+    split_dict = split_dicts[config.dataset]
     subsampled_splits = []
     labeled_splits = []
 
     random.seed(config.subsample_seed)
+    # train_splits = [split for split, num in split_dict.items() if 'train' in split]
+    # test_splits = [split for split, num in split_dict.items() if 'test' in split]
+    # val_splits = [split for split, num in split_dict.items() if 'val' in split]
     for split in split_dict:
         split_indices = metadata_df['split'] == split_dict[split]
         if split == 'train':
@@ -209,7 +219,7 @@ def subsample(metadata_df, config, subsample_sizes, dataset_suffix):
                 labeled_indices = random.sample(labeled_indices, LABELED_TEST_SIZE)
             subsampled_splits.append(unlabeled_indices)
             labeled_splits.append(labeled_indices)
-        else:
+        elif 'val' in split:
             indices = split_indices[split_indices == True]
             indices = list(indices.keys())
             if VAL_SIZE > 0 and len(indices) > VAL_SIZE:
@@ -218,7 +228,9 @@ def subsample(metadata_df, config, subsample_sizes, dataset_suffix):
             labeled_splits.append(indices)
 
     # here the test data will be the unlabeled split for which we want to collect soft-max scores and pseudolabel
-    all_indices = subsampled_splits[0] + subsampled_splits[1] + subsampled_splits[2]
+    all_indices = []
+    for index_lst in subsampled_splits:
+        all_indices += index_lst
     subsampled_df = metadata_df.loc[all_indices]
     if not os.path.exists(f"{config.root_dir}/{config.dataset}_{dataset_suffix}/{config.data_dir}"):
         os.mkdir(f"{config.root_dir}/{config.dataset}_{dataset_suffix}/{config.data_dir}")
@@ -226,7 +238,9 @@ def subsample(metadata_df, config, subsample_sizes, dataset_suffix):
                          index=False, header=list(subsampled_df.keys()))
 
     # here the test data will be the held out test set we want to evaluate the self trained model on
-    all_labeled_indices = labeled_splits[0] + labeled_splits[1] + labeled_splits[2]
+    all_labeled_indices = []
+    for index_lst in labeled_splits:
+        all_labeled_indices += index_lst
     labeled_df = metadata_df.loc[all_labeled_indices]
     labeled_df.to_csv(f"{config.root_dir}/{config.dataset}_{dataset_suffix}/{config.data_dir}/labeled_{config.dataset}.csv",
                       index=False, header=list(labeled_df.keys()))
@@ -246,6 +260,7 @@ def main():
     dataset_version = subsampled_dataset_version_dict[config.dataset]
     labeled_dataset = labeled_dataset_version_dict[config.dataset]
     label_key = label_key_dict[config.dataset]
+    split_dict = split_dicts[config.dataset]
     if not dataset_version or not label_key:
         assert 0, print("Not implemented.")
 
@@ -259,14 +274,15 @@ def main():
         **config.dataset_kwargs)
     metadata_df = full_dataset._metadata_df
     subsample_sizes = split_sizes[config.dataset]
-    subsample(metadata_df, config, subsample_sizes, dataset_suffix)
+    if not os.path.isfile(f"{config.root_dir}/{config.dataset}_{dataset_suffix}/{config.data_dir}/{dataset_version}"):
+        subsample(metadata_df, config, subsample_sizes, dataset_suffix)
 
     # self-train rounds
     for round in range(config.self_train_rounds):
         print(f"ROUND {round} OF SELF TRAINING WITH DATASET {config.data_dir}/{dataset_version} \n\n")
         
         # train the model using current pseudolabeled splits
-        log_dir = f"{config.log_dir}/round{round}/"
+        log_dir = f"{config.log_dir}/round{round}/{config.data_dir}"
         train(config, dataset_version=f"{config.data_dir}/{dataset_version}", log_dir=f"{log_dir}")
 
         # run eval on original splits with the model from the last round
@@ -330,7 +346,7 @@ def main():
         dataset_version = f"iter{round+1}.csv"
         metadata_df.to_csv(f"{config.root_dir}/{config.dataset}_{dataset_suffix}/{config.data_dir}/{dataset_version}",
                            index=False, header=list(metadata_df.keys()))
-        
+
 
 if __name__=='__main__':
     main()
