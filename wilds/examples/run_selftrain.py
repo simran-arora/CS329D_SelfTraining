@@ -101,9 +101,8 @@ label_key_dict = {
 # in the following, -1 indicates using the full split
 split_sizes = {
     # amazon sizes in full: 245502 (train), 100050 (val), 46950 (id val), 100050 (test), 46950 (id test)
-    # 'amazon': {'TRAIN': 50000, 'LABELED_TEST': -1, 'UNLABELED_TEST': 50000, 'VAL': 25000},
-    'amazon': {'TRAIN': 5, 'LABELED_TEST': 5, 'UNLABELED_TEST': 5, 'VAL': 2},
-    
+    'amazon': {'TRAIN': 50000, 'LABELED_TEST': -1, 'UNLABELED_TEST': 50000, 'VAL': 25000},
+
     # civil comments sizes in full: ~200k, ~45k, ~130k
     'civilcomments': {'TRAIN': 50000, 'LABELED_TEST': -1, 'UNLABELED_TEST': 50000, 'VAL': -1},
 }
