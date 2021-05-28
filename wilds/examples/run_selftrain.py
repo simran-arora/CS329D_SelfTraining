@@ -101,7 +101,8 @@ label_key_dict = {
 # in the following, -1 indicates using the full split
 split_sizes = {
     # amazon sizes in full: 245502 (train), 100050 (val), 46950 (id val), 100050 (test), 46950 (id test)
-    'amazon': {'TRAIN': 50000, 'LABELED_TEST': -1, 'UNLABELED_TEST': 50000, 'VAL': 25000},
+    # 'amazon': {'TRAIN': 50000, 'LABELED_TEST': -1, 'UNLABELED_TEST': 50000, 'VAL': 25000},
+    'amazon': {'TRAIN': 5, 'LABELED_TEST': 5, 'UNLABELED_TEST': 5, 'VAL': 2},
     
     # civil comments sizes in full: ~200k, ~45k, ~130k
     'civilcomments': {'TRAIN': 50000, 'LABELED_TEST': -1, 'UNLABELED_TEST': 50000, 'VAL': -1},
@@ -176,7 +177,8 @@ def evaluate(config, dataset_version, log_dir=''):
     root_dir = config.root_dir
     batch_size = config.batch_size
     cmd = f'python examples/run_expt.py --dataset={dataset} --log_dir {log_dir} --algorithm={algorithm} ' + \
-          f'--root_dir={root_dir} --dataset_version {dataset_version} --eval_only --batch_size {batch_size}'
+          f'--root_dir={root_dir} --dataset_version {dataset_version} --eval_only --batch_size {batch_size} ' \
+          f'--save_best --save_last'
     subprocess.run(shlex.split(cmd))
 
 
@@ -233,7 +235,7 @@ def subsample(metadata_df, config, subsample_sizes, dataset_suffix):
         all_indices += index_lst
     subsampled_df = metadata_df.loc[all_indices]
     if not os.path.exists(f"{config.root_dir}/{config.dataset}_{dataset_suffix}/{config.data_dir}"):
-        os.mkdir(f"{config.root_dir}/{config.dataset}_{dataset_suffix}/{config.data_dir}")
+        os.makedirs(f"{config.root_dir}/{config.dataset}_{dataset_suffix}/{config.data_dir}")
     subsampled_df.to_csv(f"{config.root_dir}/{config.dataset}_{dataset_suffix}/{config.data_dir}/subsample_{config.dataset}.csv",
                          index=False, header=list(subsampled_df.keys()))
 
@@ -252,7 +254,7 @@ def main():
     # make the location to save the run dataset (subsampled) and config
     dataset_suffix = datasetname_suffix[config.dataset]
     if not os.path.exists(f'{config.root_dir}/{config.dataset}_{dataset_suffix}/{config.data_dir}/'):
-        os.mkdir(f'{config.root_dir}/{config.dataset}_{dataset_suffix}/{config.data_dir}/')
+        os.makedirs(f'{config.root_dir}/{config.dataset}_{dataset_suffix}/{config.data_dir}/')
     with open(f'{config.root_dir}/{config.dataset}_{dataset_suffix}/{config.data_dir}/config.json', 'w') as f:
         json.dump(vars(config), f)
 
@@ -283,6 +285,8 @@ def main():
         
         # train the model using current pseudolabeled splits
         log_dir = f"{config.log_dir}/round{round}/{config.data_dir}"
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir)
         train(config, dataset_version=f"{config.data_dir}/{dataset_version}", log_dir=f"{log_dir}")
 
         # run eval on original splits with the model from the last round
@@ -291,7 +295,7 @@ def main():
 
         # load the predictions (softmax scores)
         keys = ['idx', 'scores']
-        probs_df = pd.read_csv(os.path.join(f"{log_dir}/{config.data_dir}/{config.dataset}_split:test_seed:0_epoch:best_prob.csv"),
+        probs_df = pd.read_csv(os.path.join(f"{log_dir}/{config.dataset}_split:test_seed:0_epoch:best_prob.csv"),
                                index_col=False, names=keys)
 
         # collect predictions on the resulting test data, if above the threshold

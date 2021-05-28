@@ -168,6 +168,11 @@ def save_pred_if_needed(y_pred, y_prob, dataset, epoch, config, is_best, force_s
     if config.save_pred:
         prefix = get_pred_prefix(dataset, config)
         y_prob = F.softmax(y_prob, dim=1)
+
+        if config.eval_only:
+            prefix += '/eval/'
+            if not os.path.exists(prefix):
+                os.makedirs(prefix)
         if force_save or (config.save_step is not None and (epoch + 1) % config.save_step == 0):
             save_pred(y_pred, prefix + f'epoch:{epoch}_pred.csv')
             if not config.eval_only:

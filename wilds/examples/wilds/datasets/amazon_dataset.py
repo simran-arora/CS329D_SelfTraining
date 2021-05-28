@@ -96,12 +96,12 @@ class AmazonDataset(WILDSDataset):
 
         # Get arrays
         self._input_array = list(data_df['reviewText'])
-
-        self._metadata_df = data_df
         # Get metadata
         self._metadata_fields, self._metadata_array, self._metadata_map = self.load_metadata(data_df, self.split_array)
         # Get y from metadata
         self._y_array = getattr(self.metadata_array[:,self.metadata_fields.index('y')], self._y_type)()
+        data_df['y'] = self._y_array.tolist()
+        self._metadata_df = data_df
         # Set split info
         self.initialize_split_dicts()
         # eval
