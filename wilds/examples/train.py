@@ -110,6 +110,8 @@ def train(algorithm, datasets, general_logger, config, epoch_offset, best_val_me
         else:
             additional_splits = config.eval_splits
         for split in additional_splits:
+            if split in ['id_test']:
+                continue
             _, y_pred, y_prob = run_epoch(algorithm, datasets[split], general_logger, epoch, config, train=False)
             save_pred_if_needed(y_pred, y_prob, datasets[split], epoch, config, is_best)
 
@@ -119,6 +121,8 @@ def train(algorithm, datasets, general_logger, config, epoch_offset, best_val_me
 def evaluate(algorithm, datasets, epoch, general_logger, config):
     algorithm.eval()
     for split, dataset in datasets.items():
+        if split in ['id_test']:
+            continue
         if (not config.evaluate_all_splits) and (split not in config.eval_splits):
             continue
         epoch_y_true = []
@@ -150,7 +154,7 @@ def evaluate(algorithm, datasets, epoch, general_logger, config):
 
         # Skip saving train preds, since the train loader generally shuffles the data
         if split != 'train':
-            save_pred_if_needed(y_pred, y_prob, dataset, epoch, config, is_best=False, force_save=True)
+            save_pred_if_needed(torch.cat(epoch_y_pred), torch.cat(epoch_y_probs), dataset, epoch, config, is_best=False, force_save=True)
 
 
 def log_results(algorithm, dataset, general_logger, epoch, batch_idx):
@@ -169,20 +173,19 @@ def save_pred_if_needed(y_pred, y_prob, dataset, epoch, config, is_best, force_s
         prefix = get_pred_prefix(dataset, config)
         y_prob = F.softmax(y_prob, dim=1)
 
+        eval_str = ''
         if config.eval_only:
-            prefix += '/eval/'
-            if not os.path.exists(prefix):
-                os.makedirs(prefix)
+            eval_str = '_EVAL'
         if force_save or (config.save_step is not None and (epoch + 1) % config.save_step == 0):
-            save_pred(y_pred, prefix + f'epoch:{epoch}_pred.csv')
+            save_pred(y_pred, prefix + f'epoch:{epoch}_pred{eval_str}.csv')
             if not config.eval_only:
                 save_probs(y_prob, dataset, prefix + f'epoch:{epoch}_prob.csv')
         if config.save_last:
-            save_pred(y_pred, prefix + f'epoch:last_pred.csv')
+            save_pred(y_pred, prefix + f'epoch:last_pred{eval_str}.csv')
             if not config.eval_only:
                 save_probs(y_prob, dataset, prefix + f'epoch:last_prob.csv')
         if config.save_best and is_best:
-            save_pred(y_pred, prefix + f'epoch:best_pred.csv')
+            save_pred(y_pred, prefix + f'epoch:best_pred{eval_str}.csv')
             if not config.eval_only:
                 save_probs(y_prob, dataset, prefix + f'epoch:best_prob.csv')
 
