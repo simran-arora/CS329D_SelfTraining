@@ -9,6 +9,7 @@ from transformers import (
     RobertaForSequenceClassification,
     BertForMaskedLM,
 )
+from transformers.activations import gelu
 from transformers import AutoTokenizer
 from transformers import BertModel as Bert, DistilBertModel as DistilBert
 from transformers.models.bert.modeling_bert import BertOnlyMLMHead
@@ -107,10 +108,12 @@ class BERTMultiHead(nn.Module):
     def forward(self, input_dict):
         if 'mtl' not in self.mode:
             assert(len(input_dict) == 1)
-        if self.mode == 'classification':
-            return {"classification": self.forward_classification(input_dict[0])}
+            if self.mode == 'classification':
+                return {"classification": self.forward_classification(input_dict[0])}
+            else:
+                return {"mlm": self.forward_pretraining(input_dict[0])}
         else:
-            return {"mlm": self.forward_pretraining(input_dict[0])}
+            return {"classification": self.forward_classification(input_dict[0]), 'mlm': self.forward_pretraining(input_dict[1])}
 
     def forward_classification(self, input_dict):
         device = self.bert.device
@@ -138,19 +141,24 @@ class BERTMultiHead(nn.Module):
         device = self.bert.device
         input_ids = input_dict["input_ids"].to(device)
         attention_mask = input_dict["attention_mask"].to(device)
-        token_type_ids = input_dict["token_type_ids"].to(device)
-        output = self.bert(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            token_type_ids=token_type_ids,
-        )
+        if self.model_type == 'distilbert':
+            output = self.bert(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+            )
+        else:
+            token_type_ids = input_dict["token_type_ids"].to(device)
+            output = self.bert(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                token_type_ids=token_type_ids,
+            )
         logits = self.mlm_head(output[0])
         if "label" in input_dict:
             labels = input_dict['label'].to(device)
         else:
             labels = None
         return logits, labels
-
 
 
 
@@ -203,13 +211,28 @@ def main(cfg):
         eval_data_task = DataLoader(
             val, sampler=SequentialSampler(val), batch_size=cfg.train.eval_batch_size,
             collate_fn=collate_fn
-        )    
+        )
         train_data_func = {'classification': train_data_task}
         eval_data_func = {'classification': eval_data_task}
-        trainer.train(model, train_data_func, eval_data_func)        
-    elif cfg.mode == 'train_unlabeled':
-        model.mode = 'masked_lm'
-        train = full_dataset.get_subset('test')
+        trainer.train(model, train_data_func, eval_data_func)
+    elif cfg.mode == 'train_mtl':
+        model.mode = 'train_mtl'
+        collate_fn = collate_fn_gen(tokenizer)
+        collate_fn_mlm = collate_fn_gen_mlm(tokenizer)
+        split_dict = full_dataset.split_dict
+        train = full_dataset.get_subset('train')
+        if 'id_val' in split_dict:
+            val = full_dataset.get_subset('id_val')
+        else:
+            val = full_dataset.get_subset('val')
+        train_data_task = DataLoader(
+            train, sampler=RandomSampler(train), batch_size=cfg.train.batch_size,
+            collate_fn=collate_fn
+        )
+        eval_data_task = DataLoader(
+            val, sampler=SequentialSampler(val), batch_size=cfg.train.eval_batch_size,
+            collate_fn=collate_fn
+        )
         train_data_mlm = DataLoader(
             train, sampler=RandomSampler(train), batch_size=cfg.train.batch_size,
             collate_fn=collate_fn_mlm
@@ -217,7 +240,21 @@ def main(cfg):
         eval_data_mlm = DataLoader(
             val, sampler=SequentialSampler(val), batch_size=cfg.train.eval_batch_size,
             collate_fn=collate_fn_mlm
-        )    
+        )
+        train_data_func = {'classification': train_data_task, 'mlm': train_data_mlm}
+        eval_data_func = {'classification': eval_data_task, 'mlm': eval_data_mlm}
+        trainer.train(model, train_data_func, eval_data_func)
+    elif cfg.mode == 'train_unlabeled':
+        model.mode = 'masked_lm'
+        train = full_dataset.get_subset('test')
+        train_data_mlm = DataLoader(
+            train, sampler=RandomSampler(train), batch_size=cfg.train.batch_size,
+            collate_fn=collate_fn_mlm, num_workers=8
+        )
+        eval_data_mlm = DataLoader(
+            val, sampler=SequentialSampler(val), batch_size=cfg.train.eval_batch_size,
+            collate_fn=collate_fn_mlm, num_workers=8
+        )
         #TODO: covert to data loaders
         train_data_func = {'mlm': train_data_mlm}
         eval_data_func = {'mlm': eval_data_mlm}

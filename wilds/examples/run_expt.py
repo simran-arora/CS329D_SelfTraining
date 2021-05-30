@@ -140,6 +140,7 @@ def main():
     set_seed(config.seed)
 
     # Data
+    import pdb; pdb.set_trace();
     full_dataset = wilds.get_dataset(
         dataset=config.dataset,
         version=config.version,
