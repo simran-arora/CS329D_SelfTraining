@@ -4,11 +4,11 @@ Course Project
 
 Example commands:
 
-``python examples/run_selftrain.py --dataset civilcomments --log_dir selftrain_test_civil --root_dir data --split_scheme official --n_epochs 3 --algorithm ERM``
-``python examples/run_selftrain.py --dataset amazon --log_dir selftrain_test_amazon --root_dir data --split_scheme official --algorithm ERM --data_dir baseline0.8thresh``
+``python examples/run_selftrain.py --dataset civilcomments --log_dir selftrain_test_civil --root_dir data --split_scheme official --algorithm ERM --data_dir baseline0.9thresh --batch_size 16 --self_train_threshold 0.9``
+``python examples/run_selftrain.py --dataset amazon --log_dir selftrain_test_amazon --root_dir data --split_scheme official --algorithm ERM --data_dir baseline0.8thresh --batch_size 16 --self_train_threshold 0.8``
 
 ``python examples/run_expt.py --dataset civilcomments --algorithm ERM --root_dir data  --log_dir erm_civil --dataset_version labeled_civilcomments.csv``
-``python examples/run_expt.py --dataset amazon --algorithm ERM --root_dir data  --log_dir erm_amazon --dataset_version baseline0.8thresh/labeled_amazon.csv``
+``python examples/run_expt.py --dataset amazon --algorithm ERM --root_dir data  --log_dir erm_amazon --dataset_version baseline0.8thresh/labeled_amazon.csv --batch_size 16``
 
 For fast iteration (just using a subset of the data) you can add the flags:
 ``--frac 0.002 --n_epochs 1``

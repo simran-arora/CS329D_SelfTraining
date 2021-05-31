@@ -90,18 +90,19 @@ class AmazonDataset(WILDSDataset):
             data_df = pd.read_csv(os.path.join(self.data_dir, dataset_version),
                               dtype={'reviewerID': str, 'asin': str, 'reviewTime': str, 'unixReviewTime': int,
                                      'reviewText': str, 'summary': str, 'verified': bool, 'category': str,
-                                     'reviewYear': int, 'split': int},
+                                     'reviewYear': int, 'split': int, 'id':int}, index_col='id',
                               keep_default_na=False, na_values=[], quoting=csv.QUOTE_NONNUMERIC)
             self._split_array = data_df['split'].values
 
         # Get arrays
         self._input_array = list(data_df['reviewText'])
-
-        self._metadata_df = data_df
         # Get metadata
         self._metadata_fields, self._metadata_array, self._metadata_map = self.load_metadata(data_df, self.split_array)
         # Get y from metadata
         self._y_array = getattr(self.metadata_array[:,self.metadata_fields.index('y')], self._y_type)()
+
+        data_df['y'] = self._y_array.tolist()
+        self._metadata_df = data_df
         # Set split info
         self.initialize_split_dicts()
         # eval
