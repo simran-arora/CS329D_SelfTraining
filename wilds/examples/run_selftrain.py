@@ -106,7 +106,7 @@ split_sizes = {
     # 'amazon': {'TRAIN': 50, 'LABELED_TEST': 50, 'UNLABELED_TEST': 50, 'VAL': 50},
 
     # civil comments sizes in full: ~275k, ~45k, ~130k
-    'civilcomments': {'TRAIN': 50000, 'LABELED_TEST': -1, 'UNLABELED_TEST': 34000, 'VAL': -1},
+    'civilcomments': {'TRAIN': -1, 'LABELED_TEST': -1, 'UNLABELED_TEST': 10000, 'VAL': -1},
     # 'civilcomments': {'TRAIN': 50, 'LABELED_TEST': 50, 'UNLABELED_TEST': 50, 'VAL': 50},
 }
 
@@ -194,38 +194,60 @@ def subsample(metadata_df, config, subsample_sizes, dataset_suffix):
     subsampled_splits = []
     labeled_splits = []
 
+    # BY DEMOGRAPHICS
     if config.dataset == 'civilcomments':
-        # get unique publication ids
-        split_indices = metadata_df['split'] == split_dict['train']
-        train_df = metadata_df[split_indices]
+        minority = ['female', 'transgender',
+                    'other_gender', 'homosexual_gay_or_lesbian', 'bisexual',
+                    'other_sexual_orientation', 'jewish', 'muslim', 'hindu',
+                    'buddhist', 'other_religion', 'black', 'asian',
+                    'latino', 'other_race_or_ethnicity', 'physical_disability',
+                    'intellectual_or_learning_disability', 'psychiatric_or_mental_illness',
+                    'other_disability', 'LGBTQ', 'other_religions', 'asian_latino_etc']
 
-        pub_ids = Counter()
-        for ind, row in train_df.iterrows():
-            pub_ids[row['publication_id']] += 1
-        pub_ids = pub_ids.most_common(500)
-
-        # split into id and ood
-        id_pub_ids = []
-        id_count = 0
-        ood_pub_ids = []
-        ood_count = 0
-        for tup in pub_ids:
-            ind, count = tup[0], tup[1]
-            if id_count <= ood_count:
-                id_pub_ids.append(ind)
-                id_count += count
-            else:
-                ood_pub_ids.append(ind)
-                ood_count += count
+        non_minority = ['male', 'heterosexual', 'christian', 'atheist', 'white']
 
         # get ids for everything iid vs ood
         id_indices = []
         ood_indices = []
         for ind, row in tqdm(metadata_df.iterrows()):
-            if row['publication_id'] in id_pub_ids:
+            if any(row[m] == 1 for m in non_minority) and not any(row[m] == 1 for m in minority):
                 id_indices.append(row['id'])
-            else:
+            elif any(row[m] == 1 for m in minority) and not  any(row[m] == 1 for m in non_minority):
                 ood_indices.append(row['id'])
+
+    # BY PUBLICATION ID
+    # if config.dataset == 'civilcomments':
+    #     # get unique publication ids
+    #     split_indices = metadata_df['split'] == split_dict['train']
+    #     train_df = metadata_df[split_indices]
+    #
+    #     pub_ids = Counter()
+    #     for ind, row in train_df.iterrows():
+    #         pub_ids[row['publication_id']] += 1
+    #     pub_ids = pub_ids.most_common(500)
+    #
+    #     # split into id and ood
+    #     id_pub_ids = []
+    #     id_count = 0
+    #     ood_pub_ids = []
+    #     ood_count = 0
+    #     for tup in pub_ids:
+    #         ind, count = tup[0], tup[1]
+    #         if id_count <= ood_count:
+    #             id_pub_ids.append(ind)
+    #             id_count += count
+    #         else:
+    #             ood_pub_ids.append(ind)
+    #             ood_count += count
+    #
+    #     # get ids for everything iid vs ood
+    #     id_indices = []
+    #     ood_indices = []
+    #     for ind, row in tqdm(metadata_df.iterrows()):
+    #         if row['publication_id'] in id_pub_ids:
+    #             id_indices.append(row['id'])
+    #         else:
+    #             ood_indices.append(row['id'])
 
     random.seed(config.subsample_seed)
     for split in split_dict:
@@ -269,6 +291,8 @@ def subsample(metadata_df, config, subsample_sizes, dataset_suffix):
     all_indices = []
     for index_lst in subsampled_splits:
         all_indices += index_lst
+        print(f"LEN: {len(index_lst)}")
+    print()
     if config.dataset == 'civilcomments':
         subsampled_df = metadata_df[metadata_df['id'].isin(all_indices)]
     else:
@@ -283,6 +307,7 @@ def subsample(metadata_df, config, subsample_sizes, dataset_suffix):
     all_labeled_indices = []
     for index_lst in labeled_splits:
         all_labeled_indices += index_lst
+        print(f"LEN: {len(index_lst)}")
     if config.dataset == 'civilcomments':
         labeled_df = metadata_df[metadata_df['id'].isin(all_labeled_indices)]
     else:
