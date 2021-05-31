@@ -171,6 +171,7 @@ def train(config, dataset_version='all_data_with_identities.csv', log_dir=''):
 
 
 def evaluate(config, dataset_version, log_dir=''):
+    import pdb; pdb.set_trace();
     dataset = config.dataset
     algorithm = config.algorithm
     root_dir = config.root_dir
@@ -252,7 +253,7 @@ def main():
     # make the location to save the run dataset (subsampled) and config
     dataset_suffix = datasetname_suffix[config.dataset]
     if not os.path.exists(f'{config.root_dir}/{config.dataset}_{dataset_suffix}/{config.data_dir}/'):
-        os.mkdir(f'{config.root_dir}/{config.dataset}_{dataset_suffix}/{config.data_dir}/')
+        os.makedirs(f'{config.root_dir}/{config.dataset}_{dataset_suffix}/{config.data_dir}/')
     with open(f'{config.root_dir}/{config.dataset}_{dataset_suffix}/{config.data_dir}/config.json', 'w') as f:
         json.dump(vars(config), f)
 
@@ -273,6 +274,7 @@ def main():
         split_scheme=config.split_scheme,
         **config.dataset_kwargs)
     metadata_df = full_dataset._metadata_df
+    import pdb; pdb.set_trace();
     subsample_sizes = split_sizes[config.dataset]
     if not os.path.isfile(f"{config.root_dir}/{config.dataset}_{dataset_suffix}/{config.data_dir}/{dataset_version}"):
         subsample(metadata_df, config, subsample_sizes, dataset_suffix)

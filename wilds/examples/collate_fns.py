@@ -6,7 +6,7 @@ import torch
 def collate_fn_gen(tokenizer):
     def collate_fn(list_of_examples):
         all_inputs = tokenizer([ex[0] for ex in list_of_examples], max_length=256, padding="max_length", truncation='only_first', return_tensors='pt')
-        all_inputs['label'] = torch.tensor([ex[1] for ex in list_of_examples])
+        all_inputs['classification_label'] = torch.tensor([ex[1] for ex in list_of_examples])
         return all_inputs
     return collate_fn
 
@@ -57,7 +57,7 @@ def mask(tokenized_inputs, masked_lm_prob, idx2word):
         if label == tok:
             labels[idx] = -100
     # account for [CLS] and [SEP] tokens here
-    tokenized_inputs["label"] = labels
+    tokenized_inputs["mlm_label"] = labels
     tokenized_inputs['input_ids'] = sentence_tokenized
 
 
@@ -71,5 +71,7 @@ def collate_fn_gen_mlm(tokenizer):
             mask(tokenized_input_curr, 0.15, idx2word)
             all_tokenized_inputs.append(tokenized_input_curr)
         all_keys = list(all_tokenized_inputs[0].keys())
-        return {key: torch.stack([torch.tensor(ex[key]) for ex in all_tokenized_inputs]) for key in all_keys}
+        out = {key: torch.stack([torch.tensor(ex[key]) for ex in all_tokenized_inputs]) for key in all_keys}
+        out['classification_label'] = torch.tensor([ex[1] for ex in list_of_examples])
+        return out
     return collate_fn

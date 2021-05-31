@@ -19,6 +19,13 @@ class Trainer():
     def __init__(self, args, log):
         self.args = args
         self.log = log
+        self.early_stop_key = args.get('early_stop_key', 'classification_acc')
+        self.select_by = args.get('select_by', None)
+        if self.select_by is None:
+            if 'acc' in self.early_stop_key:
+                self.select_by = 'increase'
+            else:
+                self.select_by = 'decrease'
 
     def eval(self, model, eval_func):
         total_ex = sum([len(val.dataset) for _, val in eval_func.items()])
@@ -32,7 +39,7 @@ class Trainer():
             val_acc, val_loss, total = metrics[key]
             val_acc += torch.sum((torch.argmax(logits, dim=1) == labels).float()).item()
             val_loss += loss_fn(logits, labels).detach().item()
-            total += len(labels)
+            total += (labels != -100).sum()
             metrics[key] = val_acc, val_loss, total
         loss_fn = nn.CrossEntropyLoss(reduction="sum")
         with torch.no_grad(), tqdm(total=total_ex) as progress_bar:
@@ -45,10 +52,12 @@ class Trainer():
                     logits, labels = out_dict[key]
                     update(logits, labels, key)
                     progress_bar.update(len(logits))
+        all_metrics = {}
         for key in metrics:
             acc, loss, total = metrics[key]
-            metrics[key] = acc / total, loss / total
-        return metrics
+            all_metrics[f'{key}_loss'] = loss / total
+            all_metrics[f'{key}_acc'] = acc / total
+        return all_metrics
 
     def get_batches(self, train_data_func):
         if type(train_data_func) == dict:
@@ -68,7 +77,7 @@ class Trainer():
             num_losses = 1
         effective_batch_size = self.args.batch_size * accum_steps
         num_steps_per_epoch = 1 + (total // effective_batch_size)
-        return self.args.num_epochs * num_steps_per_epoch, num_steps_per_epoch
+        return self.args.num_epochs * num_steps_per_epoch, num_steps_per_epoch, total
 
 
     def get_opt(self, model):
@@ -127,7 +136,7 @@ class Trainer():
     def train(self, model, train_data_func, eval_func):
         opt = self.get_opt(model)
         accum_steps = self.args.get('accum_steps', 1)
-        t_total, epoch_size = self.get_total(train_data_func)
+        t_total, epoch_size, total_size = self.get_total(train_data_func)
         # epoch_size is the number of updates within an epoch 
         # t_total is the total number of updates we are going to perform overall
         if self.args.get('warmup_steps', -1) >= 0:
@@ -137,7 +146,7 @@ class Trainer():
         num_epochs = self.args.num_epochs
         loss_fn = nn.CrossEntropyLoss(reduction="mean")
         num_steps = 0
-        best_acc = -1.0
+        best_score = -1.0 if self.select_by == 'increase' else 1000000
         tbx = SummaryWriter(self.args.save_dir)
         for epoch_num in tqdm(range(num_epochs)):
             self.log.info(f"Epoch: {epoch_num}")
@@ -147,7 +156,7 @@ class Trainer():
             EVAL_EVERY = epoch_size
             print("evaluating every {} iterations".format(EVAL_EVERY))
             batches = self.get_batches(train_data_func)
-            with torch.enable_grad(), tqdm(total=epoch_size) as progress_bar:
+            with torch.enable_grad(), tqdm(total=total_size) as progress_bar:
                 loss_curr = 0.0
                 losses_for_tf_all = []
                 model.zero_grad()
@@ -176,8 +185,7 @@ class Trainer():
                             eval_dict = self.eval(model, eval_func)
                             for key in eval_dict:
                                 dict_curr = {
-                                    "acc": eval_dict[key][0],
-                                    "loss": eval_dict[key][1],
+                                    "key": eval_dict[key]
                                 }
                                 results_str = ", ".join(
                                     f"{k}: {v:05.2f}" for k, v in dict_curr.items()
@@ -185,11 +193,18 @@ class Trainer():
                                 self.log.info(f"Eval {key} {results_str}")
                                 for k, v in dict_curr.items():
                                     tbx.add_scalar(f"val/{key}_{k}", v, num_steps)
-                            curr_acc = eval_dict["classification"][0]
-                            if curr_acc > best_acc:
-                                best_acc = curr_acc
+                            early_stop_key = self.early_stop_key
+                            curr_score = eval_dict[early_stop_key]
+                            if self.select_by == 'all':
+                                best_score = curr_score
                                 self.log.info(f"Saving model to {self.args.save_path}")
                                 torch.save(model.state_dict(), self.args.save_path)
+                            else:
+                                is_best = curr_score > best_score if self.select_by == 'increase' else curr_score < best_score
+                                if is_best:
+                                    best_score = curr_score
+                                    self.log.info(f"Saving model to {self.args.save_path}")
+                                    torch.save(model.state_dict(), self.args.save_path)
                         num_steps += 1
                         loss_curr = 0.0
                         losses_for_tf_all = []
