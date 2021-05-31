@@ -10,7 +10,7 @@ import ast
 import math
 import random
 import json
-from collections import defaultdict
+from collections import Counter, defaultdict, OrderedDict
 import torch.nn.functional as F
 from tqdm import tqdm
 
@@ -105,8 +105,9 @@ split_sizes = {
     'amazon': {'TRAIN': 50000, 'LABELED_TEST': -1, 'UNLABELED_TEST': 50000, 'VAL': 25000},
     # 'amazon': {'TRAIN': 50, 'LABELED_TEST': 50, 'UNLABELED_TEST': 50, 'VAL': 50},
 
-    # civil comments sizes in full: ~200k, ~45k, ~130k
-    'civilcomments': {'TRAIN': 50000, 'LABELED_TEST': -1, 'UNLABELED_TEST': 50000, 'VAL': -1},
+    # civil comments sizes in full: ~275k, ~45k, ~130k
+    'civilcomments': {'TRAIN': 50000, 'LABELED_TEST': -1, 'UNLABELED_TEST': 34000, 'VAL': -1},
+    # 'civilcomments': {'TRAIN': 50, 'LABELED_TEST': 50, 'UNLABELED_TEST': 50, 'VAL': 50},
 }
 
 
@@ -193,22 +194,62 @@ def subsample(metadata_df, config, subsample_sizes, dataset_suffix):
     subsampled_splits = []
     labeled_splits = []
 
+    if config.dataset == 'civilcomments':
+        # get unique publication ids
+        split_indices = metadata_df['split'] == split_dict['train']
+        train_df = metadata_df[split_indices]
+
+        pub_ids = Counter()
+        for ind, row in train_df.iterrows():
+            pub_ids[row['publication_id']] += 1
+        pub_ids = pub_ids.most_common(500)
+
+        # split into id and ood
+        id_pub_ids = []
+        id_count = 0
+        ood_pub_ids = []
+        ood_count = 0
+        for tup in pub_ids:
+            ind, count = tup[0], tup[1]
+            if id_count <= ood_count:
+                id_pub_ids.append(ind)
+                id_count += count
+            else:
+                ood_pub_ids.append(ind)
+                ood_count += count
+
+        # get ids for everything iid vs ood
+        id_indices = []
+        ood_indices = []
+        for ind, row in tqdm(metadata_df.iterrows()):
+            if row['publication_id'] in id_pub_ids:
+                id_indices.append(row['id'])
+            else:
+                ood_indices.append(row['id'])
+
     random.seed(config.subsample_seed)
-    # train_splits = [split for split, num in split_dict.items() if 'train' in split]
-    # test_splits = [split for split, num in split_dict.items() if 'test' in split]
-    # val_splits = [split for split, num in split_dict.items() if 'val' in split]
     for split in split_dict:
-        split_indices = metadata_df['split'] == split_dict[split]
-        if split == 'train':
+        if config.dataset == 'civilcomments' and split in ['test']:
+            sub_df = metadata_df[metadata_df['id'].isin(ood_indices)]
+            split_indices = sub_df['split'] == split_dict[split]
+            sub_df = sub_df[split_indices]
+            indices = list(sub_df['id'].values)
+        elif config.dataset == 'civilcomments' and split in ['val', 'train']:
+            sub_df = metadata_df[metadata_df['id'].isin(id_indices)]
+            split_indices = sub_df['split'] == split_dict[split]
+            sub_df = sub_df[split_indices]
+            indices = list(sub_df['id'].values)
+        else:
+            split_indices = metadata_df['split'] == split_dict[split]
             indices = split_indices[split_indices == True]
             indices = list(indices.keys())
+
+        if split == 'train':
             if TRAIN_SIZE > 0 and len(indices) > TRAIN_SIZE:
                 indices = random.sample(indices, TRAIN_SIZE)
             subsampled_splits.append(indices)
             labeled_splits.append(indices)
         elif split == 'test':
-            indices = split_indices[split_indices == True]
-            indices = list(indices.keys())
             unlabeled_indices = []
             if UNLABELED_TEST_SIZE > 0 and len(indices) > UNLABELED_TEST_SIZE:
                 unlabeled_indices = random.sample(indices, UNLABELED_TEST_SIZE)
@@ -219,8 +260,6 @@ def subsample(metadata_df, config, subsample_sizes, dataset_suffix):
             subsampled_splits.append(unlabeled_indices)
             labeled_splits.append(labeled_indices)
         elif 'val' in split:
-            indices = split_indices[split_indices == True]
-            indices = list(indices.keys())
             if VAL_SIZE > 0 and len(indices) > VAL_SIZE:
                 indices = random.sample(indices, VAL_SIZE)
             subsampled_splits.append(indices)
@@ -230,8 +269,11 @@ def subsample(metadata_df, config, subsample_sizes, dataset_suffix):
     all_indices = []
     for index_lst in subsampled_splits:
         all_indices += index_lst
-    subsampled_df = metadata_df.loc[all_indices]
-    subsampled_df['id'] = all_indices
+    if config.dataset == 'civilcomments':
+        subsampled_df = metadata_df[metadata_df['id'].isin(all_indices)]
+    else:
+        subsampled_df = metadata_df.loc[all_indices]
+        subsampled_df['id'] = all_indices
     if not os.path.exists(f"{config.root_dir}/{config.dataset}_{dataset_suffix}/{config.data_dir}"):
         os.makedirs(f"{config.root_dir}/{config.dataset}_{dataset_suffix}/{config.data_dir}")
     subsampled_df.to_csv(f"{config.root_dir}/{config.dataset}_{dataset_suffix}/{config.data_dir}/subsample_{config.dataset}.csv",
@@ -241,8 +283,11 @@ def subsample(metadata_df, config, subsample_sizes, dataset_suffix):
     all_labeled_indices = []
     for index_lst in labeled_splits:
         all_labeled_indices += index_lst
-    labeled_df = metadata_df.loc[all_labeled_indices]
-    labeled_df['id'] = all_labeled_indices
+    if config.dataset == 'civilcomments':
+        labeled_df = metadata_df[metadata_df['id'].isin(all_labeled_indices)]
+    else:
+        labeled_df = metadata_df.loc[all_labeled_indices]
+        labeled_df['id'] = all_labeled_indices
     labeled_df.to_csv(f"{config.root_dir}/{config.dataset}_{dataset_suffix}/{config.data_dir}/labeled_{config.dataset}.csv",
                       index=False, header=list(labeled_df.keys()))
 
@@ -259,7 +304,11 @@ def fixed_threshold(config, probs_df, metadata_df):
     return confident_indices
 
 
-def fixed_group_proportion(config, probs_df, metadata_df):
+def fixed_group_proportion(config, probs_df, metadata_df, override_proportion=-1):
+    proportion = config.self_train_threshold
+    if override_proportion > 0:
+        proportion = override_proportion
+
     confident_indices = {}
     identity_vars = ['male', 'female', 'LGBTQ', 'christian', 'muslim', 'other_religions', 'black', 'white']
 
@@ -280,7 +329,7 @@ def fixed_group_proportion(config, probs_df, metadata_df):
     all_selected_indices = []
     for group, prob_lst in group_probs.items():
         prob_lst = sorted(prob_lst, key=lambda x: x[1], reverse=True)
-        num_to_take = math.floor(len(prob_lst)*config.self_train_threshold)
+        num_to_take = math.floor(len(prob_lst)*proportion)
         prob_lst = prob_lst[:num_to_take]
         selected_indices = [tup[0] for tup in prob_lst if tup[0] not in all_selected_indices]
         group_probs[group] = selected_indices
@@ -301,12 +350,13 @@ def fixed_group_proportion(config, probs_df, metadata_df):
             scores = ast.literal_eval(row['scores'])
             pseudolabel = scores.index(max(scores))
             confident_indices[idx] = pseudolabel
+
     return confident_indices
 
 
 def entropy_ranked(config, probs_df, metadata_df):
     confident_indices = {}
-    
+
     example_entropies = []
     for ind, row in tqdm(probs_df.iterrows()):
         idx = row['idx']
@@ -366,6 +416,7 @@ def main():
         subsample(metadata_df, config, subsample_sizes, dataset_suffix)
 
     # self-train rounds
+    # proportions = [0.5, 0.05, 0.01]
     for round in range(config.self_train_rounds):
         print(f"ROUND {round} OF SELF TRAINING WITH DATASET {config.data_dir}/{dataset_version} \n\n")
 
@@ -400,7 +451,7 @@ def main():
         if config.confidence_condition == 'fixed_threshold':
             confident_indices = fixed_threshold(config, probs_df, metadata_df)
         elif config.confidence_condition == 'fixed_group_proportion':
-            confident_indices = fixed_group_proportion(config, probs_df, metadata_df)
+            confident_indices = fixed_group_proportion(config, probs_df, metadata_df)  # , override_proportion=proportions[round])
         else:
             assert 0, print("INVALID CONFIDENCE CONDITION")
         print(f"CONFIDENTLY LABELED EXAMPLES: {len(confident_indices)} OF {len(probs_df)}.\n\n")
