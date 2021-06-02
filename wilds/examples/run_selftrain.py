@@ -106,7 +106,7 @@ split_sizes = {
     # 'amazon': {'TRAIN': 50, 'LABELED_TEST': 50, 'UNLABELED_TEST': 50, 'VAL': 50},
 
     # civil comments sizes in full: ~275k, ~45k, ~130k
-    'civilcomments': {'TRAIN': -1, 'LABELED_TEST': -1, 'UNLABELED_TEST': 10000, 'VAL': -1},
+    'civilcomments': {'TRAIN': -1, 'LABELED_TEST': -1, 'UNLABELED_TEST': 15000, 'VAL': -1},
     # 'civilcomments': {'TRAIN': 50, 'LABELED_TEST': 50, 'UNLABELED_TEST': 50, 'VAL': 50},
 }
 
@@ -211,9 +211,9 @@ def subsample(metadata_df, config, subsample_sizes, dataset_suffix):
         id_indices = []
         ood_indices = []
         for ind, row in tqdm(metadata_df.iterrows()):
-            if any(row[m] == 1 for m in non_minority) and not any(row[m] == 1 for m in minority):
+            if any(row[m] > 0 for m in non_minority) and not any(row[m] > 0 for m in minority):
                 id_indices.append(row['id'])
-            elif any(row[m] == 1 for m in minority) and not  any(row[m] == 1 for m in non_minority):
+            elif any(row[m] > 0 for m in minority) and not any(row[m] > 0 for m in non_minority):
                 ood_indices.append(row['id'])
 
     # BY PUBLICATION ID
