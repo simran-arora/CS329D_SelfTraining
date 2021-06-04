@@ -61,6 +61,16 @@ def mask(tokenized_inputs, masked_lm_prob, idx2word):
     tokenized_inputs['input_ids'] = sentence_tokenized
 
 
+def collate_fn_gen_aux_labels(tokenizer, aux_fields):
+    idx2word = {idx: word for word, idx in tokenizer.vocab.items()}
+    def collate_fn(list_of_examples):
+        all_inputs = tokenizer([ex[0] for ex in list_of_examples], max_length=256, padding="max_length", truncation='only_first', return_tensors='pt')
+        all_inputs['classification_label'] = torch.tensor([ex[1] for ex in list_of_examples])
+        for key, val in aux_fields.items():
+            key_idx = int(val[0])
+            all_inputs[f'{key}_classification_label'] = torch.tensor([ex[-1][key_idx] for ex in list_of_examples])
+        return all_inputs
+    return collate_fn
 
 def collate_fn_gen_mlm(tokenizer):
     idx2word = {idx : word for word, idx in tokenizer.vocab.items()}

@@ -9,6 +9,12 @@ import os
 import torch
 import torch.nn as nn
 
+from torch.utils.data import (
+    DataLoader,
+    TensorDataset,
+    RandomSampler,
+    SequentialSampler,
+)
 
 from hydra import utils
 from transformers import AutoTokenizer, get_linear_schedule_with_warmup, get_constant_schedule
@@ -27,31 +33,70 @@ class Trainer():
             else:
                 self.select_by = 'decrease'
 
+    def eval_test_time_train(self, model, evaluation_dataset, collate_fn_mlm, collate_fn):
+        # for each example, take 5 gradient steps to update via mask loss. predict using either PMI or argmax p(y | x)
+        def adaptive_update(example):
+            new_model = copy.deepcopy(model)
+            optimizer = self.get_opt(new_model)
+            loss_fn = nn.CrossEntropyLoss(reduction="mean")
+            new_model.train()
+            dataloader = DataLoader([example], batch_size=1, collate_fn=collate_fn_mlm)
+            for _ in range(self.args.num_adaptive_steps):
+                batch = next(iter(dataloader))
+                out_dict = new_model((batch,))
+                logits, labels = out_dict['mlm']
+                vocab_size = logits.shape[-1]
+                logits = logits.reshape(-1, vocab_size)
+                labels = labels.reshape(-1)
+                loss = loss_fn(logits, labels)
+                new_model.zero_grad()
+                loss.backward()
+                optimizer.step()
+            new_model.eval()
+            dataloader = DataLoader([example], batch_size=1, collate_fn=collate_fn)
+            with torch.no_grad():
+                batch = next(iter(dataloader))
+                out_dict = new_model((batch,))
+                return out_dict['classification']
+        val_acc = 0.0
+        total = 0.0
+        all_logits = []
+        for ex in tqdm(evaluation_dataset):
+            logits, labels = adaptive_update(ex)
+            all_logits.append(logits)
+            val_acc += torch.sum((torch.argmax(logits, dim=1) == labels).float()).item()
+            total += (labels != -100).sum()
+        return val_acc / total, torch.cat(all_logits)
+
+
     def eval(self, model, eval_func):
-        total_ex = sum([len(val.dataset) for _, val in eval_func.items()])
         batches = zip(*[dataloader for _, dataloader in eval_func.items()])
-        metrics = {key: (0.0, 0.0, 0.0) for key in eval_func}
+        metrics = {}
         def update(logits, labels, key):
             if key == "mlm":
                 vocab_size = logits.shape[-1]
                 logits = logits.reshape(-1, vocab_size)
                 labels = labels.reshape(-1)
+            if key not in metrics:
+                metrics[key] = 0.0, 0.0, 0.0
             val_acc, val_loss, total = metrics[key]
             val_acc += torch.sum((torch.argmax(logits, dim=1) == labels).float()).item()
             val_loss += loss_fn(logits, labels).detach().item()
             total += (labels != -100).sum()
             metrics[key] = val_acc, val_loss, total
         loss_fn = nn.CrossEntropyLoss(reduction="sum")
-        with torch.no_grad(), tqdm(total=total_ex) as progress_bar:
-            for b_idx, batch in enumerate(batches):
+        with torch.no_grad():
+            for b_idx, batch in enumerate(tqdm(batches)):
                 out_dict = model(batch)
                 early_stop_idx = self.args.get("max_eval_batches", 100000)
                 if b_idx >= early_stop_idx:
                     break
                 for key in out_dict:
                     logits, labels = out_dict[key]
+                    # this is mostly for classification labels for the target domain unlabeled examples
+                    if (labels == -100).sum() == len(labels):
+                        continue
                     update(logits, labels, key)
-                    progress_bar.update(len(logits))
         all_metrics = {}
         for key in metrics:
             acc, loss, total = metrics[key]
@@ -105,7 +150,7 @@ class Trainer():
         )
         return optimizer
 
-    def forward_pass(self, model, batch, progress_bar, accum_steps, loss_fn):
+    def forward_pass(self, model, batch, accum_steps, loss_fn, progress_bar=None):
         model.train()
         out = model(batch)
         losses_for_tf = {}
@@ -114,7 +159,8 @@ class Trainer():
         loss = 0.0
         for key in out_dict:
             logits, labels = out_dict[key]
-            progress_bar.update(len(logits))
+            if progress_bar is not None:
+                progress_bar.update(len(logits))
             if key == "mlm":
                 vocab_size = logits.shape[-1]
                 logits = logits.reshape(-1, vocab_size)
@@ -156,12 +202,19 @@ class Trainer():
             EVAL_EVERY = epoch_size
             print("evaluating every {} iterations".format(EVAL_EVERY))
             batches = self.get_batches(train_data_func)
-            with torch.enable_grad(), tqdm(total=total_size) as progress_bar:
+            if num_steps >= self.args.max_iterations:
+                break
+            do_eval = self.args.get('do_eval', True)
+            cworking_dir = os.getcwd()
+            if not do_eval:
+                self.log.info(f"Saving model to {cworking_dir} {self.args.save_path}")
+                torch.save(model.state_dict(), self.args.save_path)
+            with torch.enable_grad():
                 loss_curr = 0.0
                 losses_for_tf_all = []
                 model.zero_grad()
-                for batch in batches:
-                    loss_curr_iter, losses_for_tf_dict = self.forward_pass(model, batch, progress_bar, accum_steps, loss_fn)
+                for batch in tqdm(batches):
+                    loss_curr_iter, losses_for_tf_dict = self.forward_pass(model, batch, accum_steps, loss_fn, progress_bar=None)
                     losses_for_tf_all.append(losses_for_tf_dict)
                     loss_curr += loss_curr_iter
                     if len(losses_for_tf_all) == accum_steps:
@@ -172,14 +225,12 @@ class Trainer():
                             key: np.sum([d[key] for d in losses_for_tf_all])
                             for key in losses_for_tf_all[0]
                         }
-                        progress_bar.set_postfix(epoch=epoch_num, NLL=loss_curr)
                         for key in losses_for_tf_agg:
                             tbx.add_scalar(
                                 f"train/{key}", losses_for_tf_agg[key], num_steps
                             )
                         tbx.add_scalar("train/NLL", loss_curr, num_steps)
-                        # evaluations should only happen when gradients are not stored. 
-                        if num_steps % EVAL_EVERY == 0:
+                        if num_steps % EVAL_EVERY == 0 and do_eval:
                             model.eval()
                             self.log.info(f"Evaluating at step {num_steps}...")
                             eval_dict = self.eval(model, eval_func)
@@ -197,15 +248,17 @@ class Trainer():
                             curr_score = eval_dict[early_stop_key]
                             if self.select_by == 'all':
                                 best_score = curr_score
-                                self.log.info(f"Saving model to {self.args.save_path}")
+                                self.log.info(f"Saving model to {cworking_dir} {self.args.save_path}")
                                 torch.save(model.state_dict(), self.args.save_path)
                             else:
                                 is_best = curr_score > best_score if self.select_by == 'increase' else curr_score < best_score
                                 if is_best:
                                     best_score = curr_score
-                                    self.log.info(f"Saving model to {self.args.save_path}")
+                                    self.log.info(f"Saving model to {cworking_dir} {self.args.save_path}")
                                     torch.save(model.state_dict(), self.args.save_path)
                         num_steps += 1
+                        if num_steps >= self.args.max_iterations:
+                            break
                         loss_curr = 0.0
                         losses_for_tf_all = []
         return

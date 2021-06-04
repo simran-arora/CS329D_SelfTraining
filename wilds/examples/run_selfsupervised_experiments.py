@@ -84,45 +84,45 @@ class DistilBertOnlyMLMHead(nn.Module):
 
 
 class BERTMultiHead(nn.Module):
-    def __init__(self, model_name_or_path, num_labels, mode='classification'):
+    def __init__(self, model_name_or_path, num_labels, mode='classification', aux_output_space=None):
         super().__init__()
         self.num_labels = num_labels
-        if 'distil' in model_name_or_path:
-            self.model_type = 'distilbert'
-            self.bert = DistilBert.from_pretrained(
-                model_name_or_path, return_dict=True
-            )
-            self.mlm_head = DistilBertOnlyMLMHead(self.bert.config)
-            self.classification_head = DistilBertClassificationHead(self.bert.config, num_labels=self.num_labels)
+        self.model_type = 'distilbert'
+        self.bert = DistilBert.from_pretrained(
+            model_name_or_path, return_dict=True
+        )
+        if aux_output_space:
+            self.aux_heads = nn.ModuleDict({f'{key}_classification_label': DistilBertClassificationHead(self.bert.config, num_labels=int(val[1])) for key, val in aux_output_space.items()})
         else:
-            self.model_type = 'bert'
-            self.bert = Bert.from_pretrained(
-                model_name_or_path, add_pooling_layer=False, return_dict=True
-            )
-            self.mlm_head = BertOnlyMLMHead(self.bert.config)
-            self.classification_head = ClassificationHead(
-                self.bert.config, num_labels=self.num_labels
-            )
+            self.mlm_head = DistilBertOnlyMLMHead(self.bert.config)
+        self.classification_head = DistilBertClassificationHead(self.bert.config, num_labels=self.num_labels)
         self.mode = mode
 
-    def processed_dict(self, output):
-        new_output = {}
-        for key, val in output.items():
-            logits = torch.cat([ex[0] for ex in val])
-            labels = torch.cat([ex[1] for ex in val])
-            new_output[key] = (logits, labels)
-        return new_output
-
     def forward(self, input_dicts):
-        output = {'classification': [], 'mlm': []}
+        output = {}
         for input_dict in input_dicts:
-            if 'classification_label' in input_dict:
-                output['classification'].append(self.forward_classification(input_dict))
+            representation = self.get_representation(input_dict)
+            classification_labels = [key for key in input_dict if 'classification' in key]
+            for key in classification_labels:
+                if key == 'classification_label':
+                    head_network = self.classification_head
+                else:
+                    head_network = self.aux_heads[key]
+                label_tensor = input_dict[key]
+                nkey = key.replace('_label', '')
+                if nkey not in output:
+                    output[nkey] = self.get_logits(representation, head_network, label_tensor)
+                else:
+                    curr_logits, curr_labels = output[nkey]
+                    new_logits, new_labels = self.get_logits(representation, head_network, label_tensor)
+                    output[nkey] = torch.cat([curr_logits, new_logits]),torch.cat([curr_labels, new_labels])
             if 'mlm_label' in input_dict:
-                output['mlm'].append(self.forward_pretraining(input_dict))
-        return self.processed_dict(output)
+                assert('mlm' not in output)
+                labels = input_dict['mlm_label']
+                output['mlm'] = self.get_logits(representation, self.mlm_head, labels)
+        return output
 
-    def forward_classification(self, input_dict):
+    def get_representation(self, input_dict):
         device = self.bert.device
         input_ids = input_dict["input_ids"].to(device)
         attention_mask = input_dict["attention_mask"].to(device)
@@ -138,8 +138,31 @@ class BERTMultiHead(nn.Module):
                 attention_mask=attention_mask,
                 token_type_ids=token_type_ids,
             )
-        labels = input_dict['classification_label'].to(device)
-        return self.classification_head(output.last_hidden_state), labels
+        return output.last_hidden_state
+
+    def get_logits(self, representation, classification_head, label_tensor):
+        device = self.bert.device
+        labels = label_tensor.to(device)
+        return classification_head(representation), labels
+
+    def forward_classification(self, input_dict, classification_head, label_tensor):
+        device = self.bert.device
+        input_ids = input_dict["input_ids"].to(device)
+        attention_mask = input_dict["attention_mask"].to(device)
+        if self.model_type == 'distilbert':
+            output = self.bert(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+            )
+        else:
+            token_type_ids = input_dict["token_type_ids"].to(device)
+            output = self.bert(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                token_type_ids=token_type_ids,
+            )
+        labels = label_tensor.to(device)
+        return classification_head(output.last_hidden_state), labels
 
     def forward_pretraining(self, input_dict):
         device = self.bert.device
@@ -162,8 +185,12 @@ class BERTMultiHead(nn.Module):
         return logits, labels
 
 
+def process(ex):
+    metadata = ex[2]
+    metadata_processed = [val for val in metadata[:-1]] + [-100]
+    return ex[0], torch.tensor(-100), torch.tensor(metadata_processed)
 
-@hydra.main(config_path="hydra_config", config_name="self_supervised_bert")
+@hydra.main(config_path="hydra_config", config_name="aux_self_supervised_bert")
 def main(cfg):
     # get labeled data
     orig_working_dir = get_original_cwd()
@@ -185,14 +212,16 @@ def main(cfg):
         split_scheme='official',
         dataset_version=dataset_version,
         )
-    model = BERTMultiHead(cfg.model_name_or_path, full_dataset.n_classes)
+    if 'aux' in cfg.mode:
+        aux_labels = {key: eval(val) for key, val in cfg['aux_labels'].items()}
+        model = BERTMultiHead(cfg.model_name_or_path, full_dataset.n_classes, aux_output_space=aux_labels)
+    else:
+        model = BERTMultiHead(cfg.model_name_or_path, full_dataset.n_classes, aux_output_space=None)
     model.to(device)
     if 'distil' in cfg.model_name_or_path:
         tokenizer = AutoTokenizer.from_pretrained('distilbert-base-uncased')
     else:
         tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased')
-
-
     load_path = cfg.get('load_path', None)
     if load_path:
         absolute_path = os.path.join(orig_working_dir, load_path)
@@ -218,6 +247,63 @@ def main(cfg):
         train_data_func = {'classification': train_data_task}
         eval_data_func = {'classification': eval_data_task}
         trainer.train(model, train_data_func, eval_data_func)
+    elif cfg.mode == 'train_aux':
+        collate_fn = collate_fn_gen_aux_labels(tokenizer, aux_labels)
+        all_examples = full_dataset.get_subset('test')
+        num_examples = len(all_examples)
+        train_idx = int(0.8 * num_examples)
+        # we set the labels to -100, because we do not want to use them.
+        train_ss = [process(all_examples[idx]) for idx in range(0, train_idx)]
+        val_ss = [process(all_examples[idx]) for idx in range(train_idx, num_examples)]
+        random.shuffle(val_ss)
+        train_data_task = DataLoader(
+            train_ss, sampler=RandomSampler(train_ss), batch_size=cfg.train.batch_size,
+            collate_fn=collate_fn
+        )
+        eval_data_task = DataLoader(
+            val_ss, sampler=SequentialSampler(val_ss), batch_size=cfg.train.eval_batch_size,
+            collate_fn=collate_fn
+        )
+        train_data_func = {'classification': train_data_task}
+        eval_data_func = {'classification': eval_data_task}
+        trainer.train(model, train_data_func, eval_data_func)
+    elif cfg.mode == 'train_mtl_aux':
+        collate_fn = collate_fn_gen_aux_labels(tokenizer, aux_labels)
+        split_dict = full_dataset.split_dict
+        train = full_dataset.get_subset('train')
+        first_k = cfg.get('first_k', -1)
+        if first_k != -1:
+            log.info(f"Training on {first_k} examples")
+            train = [train[idx] for idx in range(0, first_k)]
+        if 'id_val' in split_dict:
+            val = full_dataset.get_subset('id_val')
+        else:
+            val = full_dataset.get_subset('val')
+        use_target_domain = cfg.get('use_target_domain', False)
+        if use_target_domain:
+            all_examples = full_dataset.get_subset('test')
+            num_examples = len(all_examples)
+            train_idx = int(0.8 * num_examples)
+            # we set the labels to -100, because we do not want to use them.
+            train_test_domain_ss = [process(all_examples[idx]) for idx in range(0, train_idx)]
+            val_test_domain_ss = [process(all_examples[idx]) for idx in range(train_idx, num_examples)]
+            train_ss = train_test_domain_ss + [ex for ex in train]
+            val_ss = val_test_domain_ss + [ex for ex in val]
+            random.shuffle(val_ss)
+        else:
+            train_ss = train
+            val_ss = val
+        train_data_task = DataLoader(
+            train_ss, sampler=RandomSampler(train_ss), batch_size=cfg.train.batch_size,
+            collate_fn=collate_fn
+        )
+        eval_data_task = DataLoader(
+            val_ss, sampler=SequentialSampler(val_ss), batch_size=cfg.train.eval_batch_size,
+            collate_fn=collate_fn
+        )
+        train_data_func = {'classification': train_data_task}
+        eval_data_func = {'classification': eval_data_task}
+        trainer.train(model, train_data_func, eval_data_func)
     elif cfg.mode == 'train_mtl':
         model.mode = 'train_mtl'
         # TODO: add a flag such that we make a prediction even on the MLMed examples, if we do have a label present. 
@@ -226,12 +312,15 @@ def main(cfg):
         collate_fn_mlm = collate_fn_gen_mlm(tokenizer)
         split_dict = full_dataset.split_dict
         train = full_dataset.get_subset('train')
+        first_k = cfg.get('first_k', -1)
+        if first_k != -1:
+            log.info(f"Training on {first_k} examples")
+            train = [train[idx] for idx in range(0, first_k)]
         if 'id_val' in split_dict:
             val = full_dataset.get_subset('id_val')
         else:
             val = full_dataset.get_subset('val')
         use_target_domain = cfg.get('use_target_domain', False)
-        process = lambda ex: (ex[0], torch.tensor(-100), ex[2])
         if use_target_domain:
             all_examples = full_dataset.get_subset('test')
             num_examples = len(all_examples)
@@ -266,18 +355,13 @@ def main(cfg):
         eval_data_func = {'classification': eval_data_task, 'mlm': eval_data_mlm}
         trainer.train(model, train_data_func, eval_data_func)
     elif cfg.mode == 'train_unlabeled':
-        model.mode = 'masked_lm'
-        use_target_domain = cfg.get('use_target_domain', False)
+        # we finetune via the self-supervised loss on unlabeled examples here.
         collate_fn_mlm = collate_fn_gen_mlm(tokenizer)
-        if use_target_domain:
-            all_examples = full_dataset.get_subset('test')
-            num_examples = len(all_examples)
-            train_idx = int(0.8 * num_examples)
-            train = [all_examples[idx] for idx in range(0, train_idx)]
-            val = [all_examples[idx] for idx in range(train_idx, num_examples)]
-        else:
-            train = full_dataset.get_subset('train')
-            val = full_dataset.get_subset('val')
+        all_examples = full_dataset.get_subset('test')
+        num_examples = len(all_examples)
+        train_idx = int(0.8 * num_examples)
+        train = [process(all_examples[idx]) for idx in range(0, train_idx)]
+        val = [process(all_examples[idx]) for idx in range(train_idx, num_examples)]
         train_data_mlm = DataLoader(
             train, sampler=RandomSampler(train), batch_size=cfg.train.batch_size,
             collate_fn=collate_fn_mlm)
@@ -288,14 +372,30 @@ def main(cfg):
         train_data_func = {'mlm': train_data_mlm}
         eval_data_func = {'mlm': eval_data_mlm}
         trainer.train(model, train_data_func, eval_data_func)
-    elif cfg.mode == 'eval':
+    elif cfg.mode in ['eval', 'eval_aux']:
         collate_fn = collate_fn_gen(tokenizer)
-        test = full_dataset.get_subset('test')
-        eval_data_task = DataLoader(
-            test, sampler=SequentialSampler(test), batch_size=cfg.train.eval_batch_size,
-            collate_fn=collate_fn)
-        eval_data_func = {'classification': eval_data_task}
-        result = trainer.eval(model, eval_data_func)
+        split_dict = full_dataset.split_dict
+        use_val_iid = cfg.get('use_val_iid', False)
+        if use_val_iid:
+            if 'id_val' in split_dict:
+                test = full_dataset.get_subset('id_val')
+            else:
+                test = full_dataset.get_subset('val')
+        else:
+            test = full_dataset.get_subset('test')
+        test_time_train = cfg.get('test_time_train', False)
+        if test_time_train:
+            collate_fn_mlm = collate_fn_gen_mlm(tokenizer)
+            eval_data_task = DataLoader(
+                test, sampler=SequentialSampler(test), batch_size=1,
+                collate_fn=collate_fn)
+            result, logits = trainer.eval_test_time_train(model, test, collate_fn_mlm, collate_fn)
+            torch.save(logits, 'output_logits.obj')
+        else:
+            eval_data_task = DataLoader(
+                test, sampler=SequentialSampler(test), batch_size=cfg.train.eval_batch_size,
+                collate_fn=collate_fn)
+            result = trainer.eval(model, {'classification': eval_data_task})
         print(result)
 
 if __name__ == '__main__':
