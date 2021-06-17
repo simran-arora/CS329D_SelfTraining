@@ -1,8 +1,8 @@
-# CS329D_SelfTraining
+# CS329D Course Project: Exploring Self-training and Pre-training forUnsupervised Domain Adaptation
 Course Project
 
 
-##Example commands:
+## Example commands:
 
 ### SELF TRAIN CMDs
 ``python examples/run_selftrain.py --dataset civilcomments --log_dir selftrain_test_civil --root_dir data --split_scheme official --algorithm ERM --data_dir baseline0.9thresh --batch_size 16 --self_train_threshold 0.9``
