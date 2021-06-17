@@ -2,16 +2,16 @@
 Course Project
 
 
-Example commands:
+##Example commands:
 
-# SELF TRAIN CMDs
+### SELF TRAIN CMDs
 ``python examples/run_selftrain.py --dataset civilcomments --log_dir selftrain_test_civil --root_dir data --split_scheme official --algorithm ERM --data_dir baseline0.9thresh --batch_size 16 --self_train_threshold 0.9``
 
 ``python examples/run_selftrain.py --dataset amazon --log_dir selftrain_test_amazon --root_dir data --split_scheme official --algorithm ERM --data_dir baseline0.8thresh --batch_size 16 --self_train_threshold 0.8``
 
 ``python examples/run_selftrain.py --dataset amazon --log_dir selftrain_test_amazon --root_dir data --split_scheme official --algorithm ERM --data_dir group_prop_0.33 --batch_size 16 --self_train_threshold 0.33 --confidence_condition fixed_group_proportion``
 
-# ERM CMDs
+### ERM CMDs
 ``python examples/run_expt.py --dataset civilcomments --algorithm ERM --root_dir data  --log_dir erm_civil --dataset_version labeled_civilcomments.csv``
 
 ``python examples/run_expt.py --dataset amazon --algorithm ERM --root_dir data  --log_dir erm_amazon --dataset_version baseline0.8thresh/labeled_amazon.csv --batch_size 16``
