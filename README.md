@@ -1,6 +1,4 @@
-# CS329D Course Project: Exploring Self-training and Pre-training forUnsupervised Domain Adaptation
-Course Project
-
+# CS329D Course Project: Exploring Self-training and Pre-training for Unsupervised Domain Adaptation
 
 ## Example commands:
 
