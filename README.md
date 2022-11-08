@@ -1,5 +1,10 @@
 # CS329D Course Project: Exploring Self-training and Pre-training for Unsupervised Domain Adaptation
 
+## Project Report.
+
+The project report can be found [here](https://github.com/simran-arora/CS329D_SelfTraining/blob/main/CS329D_2021_Final_Project.pdf).
+
+
 ## Example commands:
 
 ### SELF TRAIN CMDs
